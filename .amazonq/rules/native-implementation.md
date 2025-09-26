@@ -20,7 +20,7 @@
 - Handle plugin execution failures gracefully
 
 ## Current Implementation
-- `pkg/aws/externalplugin.go` - External plugin wrapper
+- `internal/aws/externalplugin.go` - External plugin wrapper
 - Simple, reliable, and fully compatible with AWS CLI
 
 ## Plugin Installation

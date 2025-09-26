@@ -36,7 +36,7 @@
 - Handle Ctrl+C gracefully
 
 ## Manager Pattern
-- Create manager structs for AWS services (SSO, RDS, Secrets, etc.)
+- Create manager structs for AWS services (SSO, RDS, Secrets, etc.) in `internal/aws/`
 - Initialize with context and AWS config
 - Store clients and region in manager struct
 - Provide high-level methods for operations

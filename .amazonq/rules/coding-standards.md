@@ -25,10 +25,10 @@
 
 ## Project Structure
 - `cmd/` - Cobra commands only
-- `pkg/aws/` - AWS-specific functionality
-- `pkg/config/` - Configuration setup and management
-- `pkg/ui/` - Terminal UI components
-- No `internal/` packages unless absolutely necessary
+- `internal/aws/` - AWS-specific functionality
+- `internal/config/` - Configuration setup and management
+- `internal/ui/` - Terminal UI components
+- Use `internal/` packages for all implementation code
 
 ## Configuration Management
 - **Auto-setup**: Check for config on first run, guide user through setup if missing

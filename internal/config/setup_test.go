@@ -17,19 +17,24 @@ func TestGetConfigPath(t *testing.T) {
 }
 
 func TestEnsureConfigExists_ConfigExists(t *testing.T) {
-	// Create temporary config file
-	tempDir := t.TempDir()
-	configPath := filepath.Join(tempDir, "config.yaml")
+	// Create actual config file in home directory for test
+	home, _ := os.UserHomeDir()
+	configDir := filepath.Join(home, ".swa")
+	configPath := filepath.Join(configDir, "config.yaml")
 	
-	// Create config file
+	// Ensure config directory exists
+	os.MkdirAll(configDir, 0755)
+	
+	// Create minimal config file
 	file, err := os.Create(configPath)
 	if err != nil {
 		t.Fatalf("Failed to create test config file: %v", err)
 	}
+	file.WriteString("default_region: us-east-1\nsso:\n  region: us-east-1\n  start_url: https://test.awsapps.com/start\n")
 	file.Close()
 	
-	// We can't easily mock getConfigPath, so we'll test the actual function
-	// In a real scenario, we'd refactor to make this more testable
+	// Clean up after test
+	defer os.Remove(configPath)
 	
 	err = EnsureConfigExists()
 	if err != nil {
