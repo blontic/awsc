@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/blontic/swa/pkg/aws"
-	"github.com/blontic/swa/pkg/ui"
+	"github.com/blontic/swa/internal/aws"
+	"github.com/blontic/swa/internal/ui"
 	"github.com/spf13/cobra"
 )
 

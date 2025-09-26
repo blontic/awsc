@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/blontic/swa/pkg/config"
+	"github.com/blontic/swa/internal/config"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
