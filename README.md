@@ -1,5 +1,7 @@
 # SWA (AWS backwards)
 
+[![CI](https://github.com/blontic/swa/actions/workflows/ci.yml/badge.svg)](https://github.com/blontic/swa/actions/workflows/ci.yml)
+
 A Go-based CLI tool for AWS operations including SSO authentication, account switching, and RDS port forwarding.
 
 ## Project Structure
