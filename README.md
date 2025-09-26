@@ -13,7 +13,7 @@ A Go-based CLI tool for AWS operations including SSO authentication, account swi
 │   ├── root.go         # Root command and configuration
 │   ├── sso.go          # SSO-related commands
 │   └── rds.go          # RDS-related commands
-├── pkg/                 # Reusable packages
+├── internal/            # Internal packages
 │   ├── aws/            # AWS-specific functionality
 │   │   ├── sso.go      # SSO manager
 │   │   ├── credentials.go # Credential management
@@ -25,14 +25,14 @@ A Go-based CLI tool for AWS operations including SSO authentication, account swi
 
 ## Setup
 
-1. Initialize Go modules:
+1. Install dependencies:
 ```bash
-go mod tidy
+make deps
 ```
 
 2. Build the tool:
 ```bash
-go build -o swa
+make build
 ```
 
 3. Configure SSO settings:
@@ -157,3 +157,25 @@ sso:
 - `swa ec2 connect` - Connect to EC2 instances via SSM sessions
 - `swa secrets list` - List and view AWS Secrets Manager secrets
 - `swa config init` - Initialize configuration file
+
+## Development
+
+```bash
+# Build for current platform
+make build
+
+# Build for all platforms
+make build-all
+
+# Run tests
+make test
+
+# Run tests with coverage
+make test-coverage
+
+# Clean build artifacts
+make clean
+
+# Development workflow (deps + test + build)
+make dev
+```
