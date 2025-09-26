@@ -24,7 +24,7 @@ var forceAuth bool
 
 func init() {
 	rootCmd.AddCommand(loginCmd)
-	loginCmd.Flags().BoolVar(&forceAuth, "force-auth", false, "Force re-authentication by clearing cached tokens")
+	loginCmd.Flags().BoolVar(&forceAuth, "force", false, "Force re-authentication by clearing cached tokens")
 }
 
 func runSSOLogin(cmd *cobra.Command, args []string) {

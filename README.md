@@ -136,7 +136,7 @@ All commands support these global flags:
 ./swa --config ~/.swa-dev/config.yaml login
 
 # Force re-authentication
-./swa login --force-auth
+./swa login --force
 ```
 
 ## Configuration
