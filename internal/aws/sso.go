@@ -14,6 +14,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/sso"
 	"github.com/aws/aws-sdk-go-v2/service/sso/types"
 	"github.com/aws/aws-sdk-go-v2/service/ssooidc"
@@ -165,6 +166,48 @@ func (s *SSOManager) GetRoleCredentials(ctx context.Context, accountId, roleName
 	}
 
 	return result.RoleCredentials, nil
+}
+
+// GetRoleMaxSessionDuration gets the maximum session duration for a role
+// This requires assuming the role first to query IAM
+func (s *SSOManager) GetRoleMaxSessionDuration(ctx context.Context, accountId, roleName string) (time.Duration, error) {
+	// Get temporary credentials first
+	creds, err := s.GetRoleCredentials(ctx, accountId, roleName)
+	if err != nil {
+		return 0, err
+	}
+
+	// Create IAM client with the role credentials
+	cfg, err := config.LoadDefaultConfig(ctx,
+		config.WithCredentialsProvider(aws.CredentialsProviderFunc(func(ctx context.Context) (aws.Credentials, error) {
+			return aws.Credentials{
+				AccessKeyID:     *creds.AccessKeyId,
+				SecretAccessKey: *creds.SecretAccessKey,
+				SessionToken:    *creds.SessionToken,
+			}, nil
+		})),
+	)
+	if err != nil {
+		return 0, err
+	}
+
+	iamClient := iam.NewFromConfig(cfg)
+
+	// Get role details
+	result, err := iamClient.GetRole(ctx, &iam.GetRoleInput{
+		RoleName: &roleName,
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	// Return max session duration (default is 1 hour if not set)
+	maxDuration := time.Hour // Default
+	if result.Role.MaxSessionDuration != nil {
+		maxDuration = time.Duration(*result.Role.MaxSessionDuration) * time.Second
+	}
+
+	return maxDuration, nil
 }
 
 func (s *SSOManager) Authenticate(ctx context.Context, startURL, ssoRegion string) error {

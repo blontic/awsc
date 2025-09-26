@@ -140,8 +140,8 @@ func runSSOLogin(cmd *cobra.Command, args []string) {
 	selectedRole := roles[selectedRoleIndex]
 	fmt.Printf("✓ Selected: %s\n", *selectedRole.RoleName)
 
-	// Get role credentials
-	creds, err := ssoManager.GetRoleCredentials(ctx, *selectedAccount.AccountId, *selectedRole.RoleName)
+	// Get role credentials (with caching)
+	creds, err := ssoManager.GetCachedCredentials(ctx, *selectedAccount.AccountId, *selectedRole.RoleName)
 	if err != nil {
 		fmt.Printf("Error getting role credentials: %v\n", err)
 		return
