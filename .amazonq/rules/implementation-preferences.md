@@ -52,7 +52,7 @@
 - **CredentialsManager**: Handles authentication, token caching, credential setup
 - **SSOManager**: Pure listing operations (accounts, roles, credentials)
 - **Use dedicated swa profile**: Never overwrite default profile in ~/.aws/credentials
-- **LoadSWAConfig()**: Service managers use this to load swa profile with region override
+- **LoadSWAConfigWithProfile()**: Service managers use this to load swa profile with region override
 - **IsAuthError()**: Detect authentication/credential errors in AWS responses
 - **Clean separation**: Authentication logic in CredentialsManager, listing in SSOManager
 - **Profile isolation**: Keep swa credentials separate from user's existing AWS setup
