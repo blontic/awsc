@@ -20,7 +20,7 @@
 - SDK-based SSO authentication using device authorization flow
 - Cache tokens in `~/.aws/sso/cache/` with secure permissions (0600)
 - Write credentials to `~/.aws/config` (swa profile)
-- All AWS service managers use LoadSWAConfig() to load swa profile
+- All AWS service managers use LoadSWAConfigWithProfile() to load swa profile
 - Detect authentication errors with IsAuthError() function
 - Clean separation: authentication vs listing vs credential management
 
@@ -47,10 +47,7 @@
 - Use manager methods for complex workflows (e.g., FindBastionHosts, StartPortForwarding)
 
 ## Configuration Loading
-- **`config.LoadSWAConfig()`**: AWS config with region override for SSO operations (no profile)
-- **`config.LoadSWAConfigWithProfile()`**: AWS config with swa profile for service operations
-- Region priority: `--region` flag > `default_region` config > `sso.region` config
-- All managers use appropriate config loader for their purpose
+- See `implementation-preferences.md` for detailed config loading patterns
 
 ## Global Flags
 - **`--region`**: Override AWS region for any command
@@ -73,11 +70,7 @@
 - **SSM**: Session creation for port forwarding via external plugin
 
 ## Security Requirements
-- Use secure file permissions: 0700 for directories, 0600 for files
-- Replace SHA-1 with SHA-256 for hashing operations
-- Add nil pointer checks before dereferencing AWS SDK responses
-- Validate file paths to prevent path traversal attacks
-- Use strings.Contains() instead of custom contains() functions
+- See `coding-standards.md` for detailed security standards
 
 ## External Plugin SSM Implementation
 - Use AWS SDK SSM StartSession for session creation

@@ -17,7 +17,7 @@
 
 ## Service Managers (RDS, EC2, Secrets)
 - **AWS Operations**: Service-specific operations using AWS SDK
-- **Credential Loading**: Use `LoadSWAConfig()` to load swa profile
+- **Credential Loading**: Use `LoadSWAConfigWithProfile()` to load swa profile
 - **Error Handling**: Detect auth errors and guide user to run `swa login`
 - **Business Logic**: Complex workflows like bastion discovery, port forwarding
 - **Config Loading**: Uses `LoadSWAConfig()` for authenticated operations

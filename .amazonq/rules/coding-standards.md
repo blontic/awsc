@@ -5,7 +5,7 @@
 - **Pure Go SDK**: Use ONLY AWS SDK Go v2 - no CLI, no external tools, no plugins
 - **Self-Contained**: Everything must work within the single binary
 - **Cross-Platform**: Code must work on Windows, macOS, and Linux
-- **Zero External Dependencies**: No subprocess calls, no system dependencies
+- **Minimal External Dependencies**: Only session-manager-plugin for SSM operations
 
 ## Go Standards
 - Always use `context.Context` for AWS operations
@@ -16,12 +16,8 @@
 - Follow Go naming conventions (exported vs unexported)
 
 ## AWS SDK Usage
-- **EXCLUSIVELY use AWS SDK v2** - never CLI commands or external tools
-- Load config with region from viper: `viper.GetString("default_region")`
-- Create clients from config: `service.NewFromConfig(cfg)`
-- Use context for all AWS API calls
-- Handle AWS errors appropriately
-- Implement native WebSocket/TCP handling for SSM sessions
+- See `implementation-preferences.md` for detailed AWS SDK patterns
+- See `native-implementation.md` for SSM-specific implementation
 
 ## Project Structure
 - `cmd/` - Cobra commands only
