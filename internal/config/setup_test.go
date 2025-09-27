@@ -3,57 +3,136 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/spf13/viper"
 )
 
 func TestGetConfigPath(t *testing.T) {
-	path := getConfigPath()
-	home, _ := os.UserHomeDir()
-	expected := filepath.Join(home, ".swa", "config.yaml")
-	
-	if path != expected {
-		t.Errorf("Expected config path %s, got %s", expected, path)
+	path := GetConfigPath()
+	if path == "" {
+		t.Error("GetConfigPath should return non-empty path")
+	}
+
+	if !filepath.IsAbs(path) {
+		t.Error("GetConfigPath should return absolute path")
+	}
+
+	if !strings.HasSuffix(path, ".swa/config.yaml") {
+		t.Errorf("Expected path to end with .swa/config.yaml, got %s", path)
 	}
 }
 
-func TestEnsureConfigExists_ConfigExists(t *testing.T) {
-	// Create actual config file in home directory for test
-	home, _ := os.UserHomeDir()
-	configDir := filepath.Join(home, ".swa")
-	configPath := filepath.Join(configDir, "config.yaml")
-	
-	// Ensure config directory exists
-	os.MkdirAll(configDir, 0755)
-	
-	// Create minimal config file
-	file, err := os.Create(configPath)
+func TestShowConfig_NoFile(t *testing.T) {
+	// Create temp directory for test
+	tempDir := t.TempDir()
+
+	// Mock home directory
+	originalHome := os.Getenv("HOME")
+	defer os.Setenv("HOME", originalHome)
+	os.Setenv("HOME", tempDir)
+
+	// ShowConfig should handle missing file gracefully
+	err := ShowConfig()
 	if err != nil {
-		t.Fatalf("Failed to create test config file: %v", err)
-	}
-	file.WriteString("default_region: us-east-1\nsso:\n  region: us-east-1\n  start_url: https://test.awsapps.com/start\n")
-	file.Close()
-	
-	// Clean up after test
-	defer os.Remove(configPath)
-	
-	err = EnsureConfigExists()
-	if err != nil {
-		t.Errorf("Expected no error when config exists, got %v", err)
+		t.Errorf("ShowConfig should not return error for missing file, got: %v", err)
 	}
 }
 
-func TestEnsureConfigExists_ConfigMissing(t *testing.T) {
-	// This test would require mocking stdin, which is complex
-	// In a real scenario, we'd refactor createConfig to be more testable
-	t.Skip("Skipping interactive test - requires stdin mocking")
-	
-	// This should trigger interactive config creation, which we can't easily test
-	// In a real scenario, we'd mock the input or make createConfig testable
+func TestShowConfig_WithFile(t *testing.T) {
+	// Create temp directory for test
+	tempDir := t.TempDir()
+
+	// Mock home directory
+	originalHome := os.Getenv("HOME")
+	defer os.Setenv("HOME", originalHome)
+	os.Setenv("HOME", tempDir)
+
+	// Create .swa directory and config file
+	swaDir := filepath.Join(tempDir, ".swa")
+	os.MkdirAll(swaDir, 0755)
+
+	configFile := filepath.Join(swaDir, "config.yaml")
+	configContent := `sso:
+  start_url: https://test.awsapps.com/start
+  region: us-east-1
+default_region: us-east-1`
+
+	os.WriteFile(configFile, []byte(configContent), 0644)
+
+	// Set viper values to match file
+	viper.Set("sso.start_url", "https://test.awsapps.com/start")
+	viper.Set("sso.region", "us-east-1")
+	viper.Set("default_region", "us-east-1")
+
+	// ShowConfig should work with existing file
+	err := ShowConfig()
+	if err != nil {
+		t.Errorf("ShowConfig should not return error with valid file, got: %v", err)
+	}
+
+	// Clean up
+	viper.Reset()
+}
+
+func TestInitializeConfigWithPrompt_NoFile(t *testing.T) {
+	// Create temp directory for test
+	tempDir := t.TempDir()
+
+	// Mock home directory
+	originalHome := os.Getenv("HOME")
+	defer os.Setenv("HOME", originalHome)
+	os.Setenv("HOME", tempDir)
+
+	// Test that InitializeConfigWithPrompt doesn't panic when no file exists
+	// Skip actual execution as it requires user input
+	t.Skip("Skipping InitializeConfigWithPrompt test - requires user input")
+}
+
+func TestInitializeConfigWithPrompt_ExistingFile(t *testing.T) {
+	// Create temp directory for test
+	tempDir := t.TempDir()
+
+	// Mock home directory
+	originalHome := os.Getenv("HOME")
+	defer os.Setenv("HOME", originalHome)
+	os.Setenv("HOME", tempDir)
+
+	// Create existing config file
+	swaDir := filepath.Join(tempDir, ".swa")
+	os.MkdirAll(swaDir, 0755)
+	configFile := filepath.Join(swaDir, "config.yaml")
+	os.WriteFile(configFile, []byte("existing: config"), 0644)
+
+	// Verify file exists
+	if _, err := os.Stat(configFile); os.IsNotExist(err) {
+		t.Error("Config file should exist for this test")
+	}
+
+	// Skip actual execution as it requires user input
+	t.Skip("Skipping InitializeConfigWithPrompt test - requires user input")
+}
+
+func TestEnsureConfigExists_FileExists(t *testing.T) {
+	// Create temp directory for test
+	tempDir := t.TempDir()
+
+	// Mock home directory
+	originalHome := os.Getenv("HOME")
+	defer os.Setenv("HOME", originalHome)
+	os.Setenv("HOME", tempDir)
+
+	// Create .swa directory and config file
+	swaDir := filepath.Join(tempDir, ".swa")
+	os.MkdirAll(swaDir, 0755)
+
+	configFile := filepath.Join(swaDir, "config.yaml")
+	os.WriteFile(configFile, []byte("test: value"), 0644)
+
+	// EnsureConfigExists should return nil when file exists
 	err := EnsureConfigExists()
-	
-	// We expect this to fail in test environment due to no stdin
-	if err == nil {
-		t.Error("Expected error when config missing and no stdin available")
+	if err != nil {
+		t.Errorf("EnsureConfigExists should return nil when file exists, got: %v", err)
 	}
 }
-

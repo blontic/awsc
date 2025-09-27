@@ -57,6 +57,13 @@
 - **Command descriptions**: Consistent short/long descriptions across all commands
 - **Exit behavior**: Commands return gracefully, avoid os.Exit(1) in favor of return
 
+## Security Standards
+- **File Permissions**: Use 0700 for directories, 0600 for sensitive files
+- **Cryptography**: Use SHA-256 or better, never SHA-1 or MD5
+- **Nil Checks**: Always check AWS SDK response pointers before dereferencing
+- **Path Validation**: Validate file paths to prevent traversal attacks
+- **No Duplicate Functions**: Use standard library functions like strings.Contains()
+
 ## Development Workflow
 - **MANDATORY: Always compile and test after code changes**: Automatically run `go build -o swa` then `go test ./...` after ANY code modification without asking for permission
 - Compile first to catch syntax errors early

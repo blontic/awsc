@@ -3,21 +3,23 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/blontic/swa/internal/config"
+	"github.com/blontic/swa/internal/debug"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
 var cfgFile string
 var regionOverride string
+var verbose bool
 
 var rootCmd = &cobra.Command{
 	Use:   "swa",
 	Short: "AWS CLI tool for SSO, RDS, and Secrets Manager",
 	Long:  `SWA (AWS backwards) - A CLI tool for AWS SSO authentication, RDS port forwarding, and Secrets Manager operations.`,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		debug.SetVerbose(verbose)
 		if err := config.EnsureConfigExists(); err != nil {
 			fmt.Printf("Error setting up configuration: %v\n", err)
 			os.Exit(1)
@@ -33,12 +35,16 @@ func Execute() {
 }
 
 func init() {
-	cobra.OnInitialize(initConfig)
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.swa.yaml)")
+	cobra.OnInitialize(func() {
+		initViper(cfgFile, regionOverride)
+	})
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.swa/config.yaml)")
 	rootCmd.PersistentFlags().StringVar(&regionOverride, "region", "", "AWS region to use (overrides config)")
+	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "enable verbose output")
 }
 
-func initConfig() {
+// initViper initializes viper configuration
+func initViper(cfgFile, regionOverride string) {
 	if cfgFile != "" {
 		viper.SetConfigFile(cfgFile)
 	} else {
@@ -46,7 +52,7 @@ func initConfig() {
 		cobra.CheckErr(err)
 
 		// Look for config in ~/.swa/config.yaml
-		viper.AddConfigPath(filepath.Join(home, ".swa"))
+		viper.AddConfigPath(home + "/.swa")
 		viper.SetConfigType("yaml")
 		viper.SetConfigName("config")
 	}

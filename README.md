@@ -9,18 +9,26 @@ A Go-based CLI tool for AWS operations including SSO authentication, account swi
 ```
 .
 ├── main.go              # Entry point
-├── cmd/                 # Cobra commands
-│   ├── root.go         # Root command and configuration
-│   ├── sso.go          # SSO-related commands
-│   └── rds.go          # RDS-related commands
-├── internal/            # Internal packages
-│   ├── aws/            # AWS-specific functionality
-│   │   ├── sso.go      # SSO manager
-│   │   ├── credentials.go # Credential management
-│   │   ├── rds.go      # RDS manager
+├── cmd/                 # Cobra commands (CLI interface only)
+│   ├── root.go         # Root command and global flags
+│   ├── config.go       # Configuration commands
+│   ├── sso.go          # SSO authentication commands
+│   ├── rds.go          # RDS connection commands
+│   ├── ec2.go          # EC2 session commands
+│   ├── secrets.go      # Secrets Manager commands
+│   └── version.go      # Version information
+├── internal/            # Internal packages (business logic)
+│   ├── aws/            # AWS service managers
+│   │   ├── sso.go      # SSO authentication & account/role selection
+│   │   ├── credentials.go # AWS credential management
+│   │   ├── rds.go      # RDS instance discovery & port forwarding
+│   │   ├── ec2.go      # EC2 instance discovery & SSM sessions
+│   │   ├── secrets.go  # Secrets Manager operations
 │   │   └── externalplugin.go # Session manager plugin wrapper
-│   ├── config/         # Configuration management
+│   ├── config/         # Configuration file management
+│   │   └── setup.go    # Config initialization and validation
 │   └── ui/             # Terminal UI components
+│       └── selector.go # Interactive selection interface
 ```
 
 ## Setup
@@ -113,14 +121,16 @@ This will:
 
 ## Features
 
-- **SSO Authentication**: Interactive account and role selection
-- **RDS Port Forwarding**: Connect to RDS instances through bastion hosts
-- **EC2 Remote Sessions**: Connect to EC2 instances via SSM sessions
-- **Secrets Manager**: List and view AWS Secrets Manager secrets
+- **SSO Authentication**: Interactive account and role selection with force re-auth option
+- **RDS Port Forwarding**: Connect to RDS instances through bastion hosts with automatic discovery
+- **EC2 Remote Sessions**: Connect to EC2 instances via SSM sessions with agent detection
+- **Secrets Manager**: List and view AWS Secrets Manager secrets with JSON formatting
+- **AWS Context Display**: Shows current account, role, and region at start of each command
 - **Configuration Management**: Simple setup with `swa config init`
 - **Credential Management**: Automatic credential setup in dedicated swa profile (never overwrites default)
 - **Interactive UI**: Arrow key navigation with graceful fallbacks
-- **Global Options**: Region override and config file selection
+- **Verbose Mode**: Detailed debugging output with `--verbose` flag
+- **Global Options**: Region override, config file selection, and verbose output
 
 ## Global Options
 
@@ -135,8 +145,15 @@ All commands support these global flags:
 # Use alternate config file
 ./swa --config ~/.swa-dev/config.yaml login
 
+# Enable verbose debugging output
+./swa --verbose rds connect
+./swa -v ec2 connect
+
 # Force re-authentication
 ./swa login --force
+
+# Combine flags
+./swa --verbose --region us-west-2 rds connect
 ```
 
 ## Configuration
