@@ -78,17 +78,17 @@ func RunSelector(title string, choices []string) (int, error) {
 	// Try interactive mode first
 	model := NewSelector(title, choices)
 	p := tea.NewProgram(model)
-	
+
 	finalModel, err := p.Run()
 	if err != nil {
 		// Fallback to simple numbered selection
 		return runSimpleSelector(title, choices)
 	}
-	
+
 	if m, ok := finalModel.(SelectorModel); ok {
 		return m.Selected(), nil
 	}
-	
+
 	return -1, fmt.Errorf("unexpected model type")
 }
 
@@ -97,16 +97,16 @@ func runSimpleSelector(title string, choices []string) (int, error) {
 	for i, choice := range choices {
 		fmt.Printf("%d. %s\n", i+1, choice)
 	}
-	
+
 	fmt.Print("Select (number): ")
 	var choice int
 	if _, err := fmt.Scanln(&choice); err != nil {
 		return -1, err
 	}
-	
+
 	if choice < 1 || choice > len(choices) {
 		return -1, fmt.Errorf("invalid selection")
 	}
-	
+
 	return choice - 1, nil
 }

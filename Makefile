@@ -1,4 +1,4 @@
-.PHONY: build clean test test-verbose test-coverage run deps install build-all
+.PHONY: build clean test test-verbose test-coverage run deps install build-all fmt
 
 # Version variables
 VERSION ?= $(shell git describe --tags --always --dirty)
@@ -42,6 +42,10 @@ run:
 deps:
 	go mod tidy
 	go mod download
+
+# Format all Go code
+fmt:
+	go fmt ./...
 
 # Install the tool to GOPATH/bin
 install:

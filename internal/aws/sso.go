@@ -2,123 +2,34 @@ package aws
 
 import (
 	"context"
-	"crypto/sha1"
-	"encoding/json"
 	"fmt"
-	"io/ioutil"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
-	"time"
+	"sort"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/sso"
 	"github.com/aws/aws-sdk-go-v2/service/sso/types"
-	"github.com/aws/aws-sdk-go-v2/service/ssooidc"
-
+	swaconfig "github.com/blontic/swa/internal/config"
+	"github.com/blontic/swa/internal/ui"
 	"github.com/spf13/viper"
 )
 
 type SSOManager struct {
-	client     *sso.Client
-	oidcClient *ssooidc.Client
-}
-
-type SSOCache struct {
-	AccessToken string    `json:"accessToken"`
-	ExpiresAt   time.Time `json:"expiresAt"`
-	Region      string    `json:"region"`
-	StartURL    string    `json:"startUrl"`
+	client *sso.Client
 }
 
 func NewSSOManager(ctx context.Context) (*SSOManager, error) {
-	// Load config with SSO region (uses --region override if provided)
-	var cfg aws.Config
-	var err error
-	
-	// Use region override if provided, otherwise use SSO region from config
-	region := viper.GetString("default_region")
-	if region == "" {
-		region = viper.GetString("sso.region")
-	}
-	
-	if region != "" {
-		cfg, err = config.LoadDefaultConfig(ctx, config.WithRegion(region))
-	} else {
-		cfg, err = config.LoadDefaultConfig(ctx)
-	}
-	
+	cfg, err := swaconfig.LoadSWAConfig(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	return &SSOManager{
-		client:     sso.NewFromConfig(cfg),
-		oidcClient: ssooidc.NewFromConfig(cfg),
+		client: sso.NewFromConfig(cfg),
 	}, nil
 }
 
-func (s *SSOManager) GetCachedToken() (*string, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return nil, err
-	}
-
-	cacheDir := filepath.Join(homeDir, ".aws", "sso", "cache")
-	files, err := ioutil.ReadDir(cacheDir)
-	if err != nil {
-		return nil, fmt.Errorf("no SSO cache found, please run 'aws sso login' first")
-	}
-
-	// Find the most recent cache file
-	var latestFile string
-	var latestTime time.Time
-
-	for _, file := range files {
-		if file.IsDir() {
-			continue
-		}
-		
-		if file.ModTime().After(latestTime) {
-			latestTime = file.ModTime()
-			latestFile = file.Name()
-		}
-	}
-
-	if latestFile == "" {
-		return nil, fmt.Errorf("no valid SSO cache files found")
-	}
-
-	cacheFile := filepath.Join(cacheDir, latestFile)
-	data, err := ioutil.ReadFile(cacheFile)
-	if err != nil {
-		return nil, err
-	}
-
-	var cache SSOCache
-	if err := json.Unmarshal(data, &cache); err != nil {
-		return nil, err
-	}
-
-	// Check if token is expired
-	if time.Now().After(cache.ExpiresAt) {
-		return nil, fmt.Errorf("SSO token expired, please run 'aws sso login'")
-	}
-
-	return &cache.AccessToken, nil
-}
-
-func (s *SSOManager) ListAccounts(ctx context.Context) ([]types.AccountInfo, error) {
-	token, err := s.GetCachedToken()
-	if err != nil {
-		return nil, err
-	}
-
+func (s *SSOManager) ListAccounts(ctx context.Context, accessToken string) ([]types.AccountInfo, error) {
 	input := &sso.ListAccountsInput{
-		AccessToken: token,
+		AccessToken: &accessToken,
 	}
 
 	result, err := s.client.ListAccounts(ctx, input)
@@ -129,14 +40,9 @@ func (s *SSOManager) ListAccounts(ctx context.Context) ([]types.AccountInfo, err
 	return result.AccountList, nil
 }
 
-func (s *SSOManager) ListRoles(ctx context.Context, accountId string) ([]types.RoleInfo, error) {
-	token, err := s.GetCachedToken()
-	if err != nil {
-		return nil, err
-	}
-
+func (s *SSOManager) ListRoles(ctx context.Context, accessToken, accountId string) ([]types.RoleInfo, error) {
 	input := &sso.ListAccountRolesInput{
-		AccessToken: token,
+		AccessToken: &accessToken,
 		AccountId:   &accountId,
 	}
 
@@ -148,14 +54,9 @@ func (s *SSOManager) ListRoles(ctx context.Context, accountId string) ([]types.R
 	return result.RoleList, nil
 }
 
-func (s *SSOManager) GetRoleCredentials(ctx context.Context, accountId, roleName string) (*types.RoleCredentials, error) {
-	token, err := s.GetCachedToken()
-	if err != nil {
-		return nil, err
-	}
-
+func (s *SSOManager) GetRoleCredentials(ctx context.Context, accessToken, accountId, roleName string) (*types.RoleCredentials, error) {
 	input := &sso.GetRoleCredentialsInput{
-		AccessToken: token,
+		AccessToken: &accessToken,
 		AccountId:   &accountId,
 		RoleName:    &roleName,
 	}
@@ -168,158 +69,138 @@ func (s *SSOManager) GetRoleCredentials(ctx context.Context, accountId, roleName
 	return result.RoleCredentials, nil
 }
 
-// GetRoleMaxSessionDuration gets the maximum session duration for a role
-// This requires assuming the role first to query IAM
-func (s *SSOManager) GetRoleMaxSessionDuration(ctx context.Context, accountId, roleName string) (time.Duration, error) {
-	// Get temporary credentials first
-	creds, err := s.GetRoleCredentials(ctx, accountId, roleName)
+// RunLogin handles the complete SSO login workflow
+func (s *SSOManager) RunLogin(ctx context.Context, force bool) error {
+	// Display current AWS context if available
+	if !force {
+		DisplayAWSContext(ctx)
+	}
+
+	// Check if config exists
+	if viper.GetString("sso.start_url") == "" {
+		return fmt.Errorf("no SSO configuration found. Please run 'swa config init' first")
+	}
+
+	// Create credentials manager for authentication
+	credentialsManager, err := NewCredentialsManager(ctx)
 	if err != nil {
-		return 0, err
+		return fmt.Errorf("failed to create credentials manager: %v", err)
 	}
 
-	// Create IAM client with the role credentials
-	cfg, err := config.LoadDefaultConfig(ctx,
-		config.WithCredentialsProvider(aws.CredentialsProviderFunc(func(ctx context.Context) (aws.Credentials, error) {
-			return aws.Credentials{
-				AccessKeyID:     *creds.AccessKeyId,
-				SecretAccessKey: *creds.SecretAccessKey,
-				SessionToken:    *creds.SessionToken,
-			}, nil
-		})),
-	)
-	if err != nil {
-		return 0, err
-	}
-
-	iamClient := iam.NewFromConfig(cfg)
-
-	// Get role details
-	result, err := iamClient.GetRole(ctx, &iam.GetRoleInput{
-		RoleName: &roleName,
-	})
-	if err != nil {
-		return 0, err
-	}
-
-	// Return max session duration (default is 1 hour if not set)
-	maxDuration := time.Hour // Default
-	if result.Role.MaxSessionDuration != nil {
-		maxDuration = time.Duration(*result.Role.MaxSessionDuration) * time.Second
-	}
-
-	return maxDuration, nil
-}
-
-func (s *SSOManager) Authenticate(ctx context.Context, startURL, ssoRegion string) error {
-	// Register client
-	registerResp, err := s.oidcClient.RegisterClient(ctx, &ssooidc.RegisterClientInput{
-		ClientName: aws.String("swa"),
-		ClientType: aws.String("public"),
-	})
-	if err != nil {
-		return fmt.Errorf("failed to register client: %v", err)
-	}
-
-	// Start device authorization
-	deviceResp, err := s.oidcClient.StartDeviceAuthorization(ctx, &ssooidc.StartDeviceAuthorizationInput{
-		ClientId:     registerResp.ClientId,
-		ClientSecret: registerResp.ClientSecret,
-		StartUrl:     aws.String(startURL),
-	})
-	if err != nil {
-		return fmt.Errorf("failed to start device authorization: %v", err)
-	}
-
-	// Open browser
-	fmt.Printf("Opening browser to: %s\n", *deviceResp.VerificationUriComplete)
-	fmt.Printf("If browser doesn't open, visit: %s\n", *deviceResp.VerificationUriComplete)
-	fmt.Printf("And enter code: %s\n", *deviceResp.UserCode)
-	
-	if err := openBrowser(*deviceResp.VerificationUriComplete); err != nil {
-		fmt.Printf("Failed to open browser: %v\n", err)
-	}
-
-	// Poll for token
-	fmt.Println("Waiting for authentication...")
-	for {
-		tokenResp, err := s.oidcClient.CreateToken(ctx, &ssooidc.CreateTokenInput{
-			ClientId:     registerResp.ClientId,
-			ClientSecret: registerResp.ClientSecret,
-			DeviceCode:   deviceResp.DeviceCode,
-			GrantType:    aws.String("urn:ietf:params:oauth:grant-type:device_code"),
-		})
-		
-		if err != nil {
-			// Check if we should continue polling
-			if isRetryableError(err) {
-				time.Sleep(time.Duration(deviceResp.Interval) * time.Second)
-				continue
+	// Skip token check if force is true
+	if !force {
+		// Try to get access token and list accounts first
+		accessToken, err := credentialsManager.GetCachedToken()
+		if err == nil {
+			// Try listing accounts to see if credentials work
+			accounts, listErr := s.ListAccounts(ctx, *accessToken)
+			if listErr == nil && len(accounts) > 0 {
+				// Credentials work, proceed with account/role selection
+				return s.handleAccountRoleSelection(ctx, *accessToken, accounts)
 			}
-			return fmt.Errorf("failed to create token: %v", err)
 		}
-
-		// Save token to cache
-		if err := s.saveTokenToCache(startURL, ssoRegion, tokenResp.AccessToken, &tokenResp.ExpiresIn); err != nil {
-			return fmt.Errorf("failed to save token: %v", err)
-		}
-
-		break
 	}
 
+	// If we get here, need to re-authenticate
+	fmt.Printf("Starting SSO authentication...\n")
+
+	// Try authentication
+	startURL := viper.GetString("sso.start_url")
+	ssoRegion := viper.GetString("sso.region")
+
+	if err := credentialsManager.Authenticate(ctx, startURL, ssoRegion); err != nil {
+		return fmt.Errorf("SSO authentication failed: %v", err)
+	}
+
+	// Get fresh access token
+	accessToken, err := credentialsManager.GetCachedToken()
+	if err != nil {
+		return fmt.Errorf("failed to get access token: %v", err)
+	}
+
+	// List accounts for selection
+	accounts, err := s.ListAccounts(ctx, *accessToken)
+	if err != nil {
+		return fmt.Errorf("error listing accounts: %v", err)
+	}
+
+	if len(accounts) == 0 {
+		return fmt.Errorf("no accounts found")
+	}
+
+	return s.handleAccountRoleSelection(ctx, *accessToken, accounts)
+}
+
+func (s *SSOManager) handleAccountRoleSelection(ctx context.Context, accessToken string, accounts []types.AccountInfo) error {
+	// Sort accounts alphabetically
+	sort.Slice(accounts, func(i, j int) bool {
+		return *accounts[i].AccountName < *accounts[j].AccountName
+	})
+
+	// Create account options
+	accountOptions := make([]string, len(accounts))
+	for i, account := range accounts {
+		accountOptions[i] = fmt.Sprintf("%s (%s)", *account.AccountName, *account.AccountId)
+	}
+
+	// Interactive account selection
+	selectedAccountIndex, err := ui.RunSelector("Select AWS Account:", accountOptions)
+	if err != nil {
+		return fmt.Errorf("error selecting account: %v", err)
+	}
+	if selectedAccountIndex == -1 {
+		return fmt.Errorf("no account selected")
+	}
+
+	selectedAccount := accounts[selectedAccountIndex]
+	fmt.Printf("Selected: %s\n", *selectedAccount.AccountName)
+
+	// List roles
+	roles, err := s.ListRoles(ctx, accessToken, *selectedAccount.AccountId)
+	if err != nil {
+		return fmt.Errorf("error listing roles: %v", err)
+	}
+
+	if len(roles) == 0 {
+		return fmt.Errorf("no roles found for this account")
+	}
+
+	// Sort roles alphabetically
+	sort.Slice(roles, func(i, j int) bool {
+		return *roles[i].RoleName < *roles[j].RoleName
+	})
+
+	// Create role options
+	roleOptions := make([]string, len(roles))
+	for i, role := range roles {
+		roleOptions[i] = *role.RoleName
+	}
+
+	// Interactive role selection
+	selectedRoleIndex, err := ui.RunSelector(fmt.Sprintf("Select role for %s:", *selectedAccount.AccountName), roleOptions)
+	if err != nil {
+		return fmt.Errorf("error selecting role: %v", err)
+	}
+	if selectedRoleIndex == -1 {
+		return fmt.Errorf("no role selected")
+	}
+
+	selectedRole := roles[selectedRoleIndex]
+	fmt.Printf("Selected: %s\n", *selectedRole.RoleName)
+
+	// Get credentials (AWS SSO automatically uses max duration for the role)
+	creds, err := s.GetRoleCredentials(ctx, accessToken, *selectedAccount.AccountId, *selectedRole.RoleName)
+	if err != nil {
+		return fmt.Errorf("error getting role credentials: %v", err)
+	}
+
+	// Set up credentials
+	err = SetupCredentials(*selectedAccount.AccountId, *selectedRole.RoleName, creds)
+	if err != nil {
+		return fmt.Errorf("error setting up credentials: %v", err)
+	}
+
+	fmt.Printf("Assumed role %s in account %s\n", *selectedRole.RoleName, *selectedAccount.AccountName)
+	fmt.Printf("Credentials written to AWS config profile 'swa'\n")
 	return nil
-}
-
-func openBrowser(url string) error {
-	var cmd string
-	var args []string
-
-	switch runtime.GOOS {
-	case "windows":
-		cmd = "cmd"
-		args = []string{"/c", "start"}
-	case "darwin":
-		cmd = "open"
-	default: // "linux", "freebsd", "openbsd", "netbsd"
-		cmd = "xdg-open"
-	}
-	args = append(args, url)
-	return exec.Command(cmd, args...).Start()
-}
-
-func isRetryableError(err error) bool {
-	// Check for authorization_pending or slow_down errors
-	return true // Simplified for now
-}
-
-func (s *SSOManager) saveTokenToCache(startURL, ssoRegion string, accessToken *string, expiresIn *int32) error {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-
-	cacheDir := filepath.Join(homeDir, ".aws", "sso", "cache")
-	if err := os.MkdirAll(cacheDir, 0755); err != nil {
-		return err
-	}
-
-	// Create cache filename based on start URL
-	h := sha1.New()
-	h.Write([]byte(startURL))
-	filename := fmt.Sprintf("%x.json", h.Sum(nil))
-	cacheFile := filepath.Join(cacheDir, filename)
-
-	// Create cache entry
-	cache := SSOCache{
-		AccessToken: *accessToken,
-		ExpiresAt:   time.Now().Add(time.Duration(*expiresIn) * time.Second),
-		Region:      ssoRegion,
-		StartURL:    startURL,
-	}
-
-	data, err := json.MarshalIndent(cache, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return ioutil.WriteFile(cacheFile, data, 0644)
 }

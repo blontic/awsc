@@ -3,19 +3,22 @@
 ## AWS Operations
 - **ALWAYS use AWS SDK Go v2** for AWS API calls
 - Use `github.com/aws/aws-sdk-go-v2/service/*` packages
-- Load config with swa profile: `LoadSWAConfig(ctx)` - includes region override and swa profile
+- **Config loading patterns**:
+  - `config.LoadAWSConfig(ctx)`: For SSO operations (region override only)
+  - `LoadSWAConfig(ctx)`: For service operations (swa profile + region override)
 - Create service clients from config: `service.NewFromConfig(cfg)`
 - Pass context to all AWS API calls
 - For SSM operations: Use StartSession to create sessions, external plugin for protocol
 - For RDS operations: Use DescribeDBInstances for listing instances
 - For EC2 operations: Use DescribeInstances, DescribeSecurityGroups for bastion discovery
 
-## SSM Port Forwarding
+## SSM Operations
 - **External plugin approach**: Use official session-manager-plugin binary
 - **SDK for session creation**: Use AWS SDK to call StartSession
 - **Plugin for protocol**: Let official plugin handle WebSocket/TCP complexity
 - **Same requirement as AWS CLI**: Users need session-manager-plugin installed
 - **100% compatibility**: Uses exact same code path as AWS CLI
+- **Clear error messages**: Provide installation instructions when plugin missing
 
 ## Code Organization
 - Keep functions focused and minimal
@@ -46,11 +49,12 @@
 - No hardcoded values or credentials
 
 ## Credential Handling
+- **CredentialsManager**: Handles authentication, token caching, credential setup
+- **SSOManager**: Pure listing operations (accounts, roles, credentials)
 - **Use dedicated swa profile**: Never overwrite default profile in ~/.aws/credentials
-- **LoadSWAConfig()**: All managers use this to load swa profile with region override
+- **LoadSWAConfig()**: Service managers use this to load swa profile with region override
 - **IsAuthError()**: Detect authentication/credential errors in AWS responses
-- **Auto-retry pattern**: Try operation → Detect auth error → Run handleAuthenticationError() → Recreate manager → Retry operation
-- **Consistent pattern**: Create manager → Try AWS operation → Handle auth errors → Recreate manager → Retry
+- **Clean separation**: Authentication logic in CredentialsManager, listing in SSOManager
 - **Profile isolation**: Keep swa credentials separate from user's existing AWS setup
 
 ## Global Options
@@ -58,13 +62,20 @@
 - **Priority order**: Command line `--region` > config `default_region` > config `sso.region` > AWS default
 - **Consistent behavior**: All AWS service managers respect region override
 
+## cmd Folder Compliance
+- **Only Cobra setup**: cmd/ files contain ONLY Cobra command definitions and setup
+- **No business logic**: All AWS operations, file I/O, and complex logic in internal/ packages
+- **Delegate to managers**: Commands create appropriate managers (CredentialsManager for auth, service managers for operations)
+- **Minimal error handling**: Only basic error printing, detailed handling in managers
+- **Clean separation**: cmd/ for CLI interface, internal/ for implementation
+
 ## User Experience
-- Provide clear, actionable error messages
-- **Minimal verbose output**: Remove unnecessary progress messages like "Fetching...", "Finding..."
-- **Selection confirmation**: Show "Selected: [item]" after user selections (consistent across all commands)
-- **Graceful quit**: Handle 'q' key without showing exit status or error messages
-- **Credential guidance**: When credentials missing/expired, show "Please run: swa login"
-- **Clean output**: No emojis in output headers, keep formatting minimal and professional
-- Use interactive selection when possible
+- **AWS Context Display**: Show "AccountID: xxx | Role: xxx | Region: xxx" at start of each command
+- **Interactive Selection**: Consistent arrow-key navigation with ui.RunSelector
+- **Selection Confirmation**: Show "Selected: [item]" after user selections (consistent across all commands)
+- **Graceful Quit**: Handle 'q' key without showing exit status or error messages
+- **Credential Guidance**: When credentials missing/expired, show "Please run: swa login"
+- **Clean Output**: No emojis in output headers, keep formatting minimal and professional
+- **Verbose Mode**: Use `--verbose` flag for detailed debugging, clean output by default
+- **Error Messages**: Clear, actionable error messages with helpful guidance
 - Graceful fallback for non-interactive environments
-- Clean, minimal output

@@ -33,7 +33,7 @@ func (pf *ExternalPluginForwarder) StartPortForwardingToRemoteHost(ctx context.C
 
 	// Start SSM session
 	sessionInput := &ssm.StartSessionInput{
-		Target: aws.String(bastionId),
+		Target:       aws.String(bastionId),
 		DocumentName: aws.String("AWS-StartPortForwardingSessionToRemoteHost"),
 		Parameters: map[string][]string{
 			"host":            {remoteHost},
@@ -55,12 +55,12 @@ func (pf *ExternalPluginForwarder) StartPortForwardingToRemoteHost(ctx context.C
 	})
 
 	// Prepare parameters for plugin
-	parametersJson := fmt.Sprintf(`{"Target":"%s","DocumentName":"AWS-StartPortForwardingSessionToRemoteHost","Parameters":{"host":["%s"],"portNumber":["%s"],"localPortNumber":["%s"]}}`, 
+	parametersJson := fmt.Sprintf(`{"Target":"%s","DocumentName":"AWS-StartPortForwardingSessionToRemoteHost","Parameters":{"host":["%s"],"portNumber":["%s"],"localPortNumber":["%s"]}}`,
 		bastionId, remoteHost, strconv.Itoa(remotePort), strconv.Itoa(localPort))
 
 	// Call session-manager-plugin with exact same arguments as AWS CLI
 	cmd := exec.CommandContext(ctx, "session-manager-plugin",
-		string(responseJson),  // Session response
+		string(responseJson), // Session response
 		pf.region,            // Region
 		"StartSession",       // Operation
 		"",                   // Profile (empty)
@@ -102,7 +102,7 @@ func (pf *ExternalPluginForwarder) StartInteractiveSession(ctx context.Context, 
 
 	// Call session-manager-plugin with exact same arguments as AWS CLI
 	cmd := exec.CommandContext(ctx, "session-manager-plugin",
-		string(responseJson),  // Session response
+		string(responseJson), // Session response
 		pf.region,            // Region
 		"StartSession",       // Operation
 		"",                   // Profile (empty)
@@ -120,11 +120,11 @@ func (pf *ExternalPluginForwarder) handleMissingPlugin() error {
 	fmt.Printf("\n❌ Session Manager Plugin not found\n\n")
 	fmt.Printf("The AWS Session Manager Plugin is required for SSM sessions.\n")
 	fmt.Printf("Please install it using one of these methods:\n\n")
-	
+
 	fmt.Printf("📦 macOS: brew install --cask session-manager-plugin\n")
 	fmt.Printf("📦 Linux: curl -o plugin.deb https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb && sudo dpkg -i plugin.deb\n")
 	fmt.Printf("📦 Windows: Download from https://s3.amazonaws.com/session-manager-downloads/plugin/latest/windows/SessionManagerPluginSetup.exe\n\n")
-	
+
 	fmt.Printf("After installation, run the command again.\n")
 	return fmt.Errorf("session-manager-plugin not installed")
 }
