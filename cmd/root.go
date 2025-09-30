@@ -46,6 +46,11 @@ func init() {
 // initViper initializes viper configuration
 func initViper(cfgFile, regionOverride string) {
 	if cfgFile != "" {
+		// Check if custom config file exists
+		if _, err := os.Stat(cfgFile); os.IsNotExist(err) {
+			fmt.Printf("Error: config file '%s' does not exist\n", cfgFile)
+			os.Exit(1)
+		}
 		viper.SetConfigFile(cfgFile)
 	} else {
 		home, err := os.UserHomeDir()
