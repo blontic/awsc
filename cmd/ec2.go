@@ -21,23 +21,48 @@ var ec2ConnectCmd = &cobra.Command{
 	Run:   runEC2Connect,
 }
 
+var ec2RdpCmd = &cobra.Command{
+	Use:   "rdp",
+	Short: "Start RDP port forwarding to Windows EC2 instance",
+	Long:  `List Windows EC2 instances and start RDP port forwarding on localhost:3389`,
+	Run:   runEC2RDP,
+}
+
 func init() {
 	rootCmd.AddCommand(ec2Cmd)
 	ec2Cmd.AddCommand(ec2ConnectCmd)
+	ec2Cmd.AddCommand(ec2RdpCmd)
+}
+
+func createEC2Manager() (*aws.EC2Manager, error) {
+	ctx := context.Background()
+	return aws.NewEC2Manager(ctx)
 }
 
 func runEC2Connect(cmd *cobra.Command, args []string) {
 	ctx := context.Background()
 
-	// Create EC2 manager
-	ec2Manager, err := aws.NewEC2Manager(ctx)
+	ec2Manager, err := createEC2Manager()
 	if err != nil {
 		fmt.Printf("Error creating EC2 manager: %v\n", err)
 		return
 	}
 
-	// Run the EC2 connect workflow
 	if err := ec2Manager.RunConnect(ctx); err != nil {
+		fmt.Printf("Error: %v\n", err)
+	}
+}
+
+func runEC2RDP(cmd *cobra.Command, args []string) {
+	ctx := context.Background()
+
+	ec2Manager, err := createEC2Manager()
+	if err != nil {
+		fmt.Printf("Error creating EC2 manager: %v\n", err)
+		return
+	}
+
+	if err := ec2Manager.RunRDP(ctx); err != nil {
 		fmt.Printf("Error: %v\n", err)
 	}
 }
