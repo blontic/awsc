@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -103,6 +104,25 @@ func TestInitViper_WithConfigFile(t *testing.T) {
 	}()
 
 	initViper(configFile, "")
+}
+
+func TestInitViper_NonexistentConfigFile(t *testing.T) {
+	// Test that initViper exits when config file doesn't exist
+	if os.Getenv("BE_CRASHER") == "1" {
+		initViper("/nonexistent/config.yaml", "")
+		return
+	}
+
+	// Run the test in a subprocess
+	cmd := exec.Command(os.Args[0], "-test.run=TestInitViper_NonexistentConfigFile")
+	cmd.Env = append(os.Environ(), "BE_CRASHER=1")
+	err := cmd.Run()
+
+	// Expect the subprocess to exit with non-zero status
+	if e, ok := err.(*exec.ExitError); ok && !e.Success() {
+		return // Expected behavior
+	}
+	t.Fatalf("Expected initViper to exit when config file doesn't exist, but it didn't")
 }
 
 func TestInitViper_RegionOverride(t *testing.T) {
