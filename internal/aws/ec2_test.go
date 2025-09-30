@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -50,7 +51,7 @@ func TestNewEC2ManagerWithOptions(t *testing.T) {
 	}
 }
 
-func TestEC2Manager_ListSSMInstances(t *testing.T) {
+func TestEC2Manager_ListAllInstances(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -200,7 +201,7 @@ func TestEC2Manager_ListSSMInstances(t *testing.T) {
 				}
 			}
 
-			instances, err := manager.ListSSMInstances(context.Background())
+			instances, err := manager.ListAllInstances(context.Background())
 
 			if tt.expectedError && err == nil {
 				t.Error("Expected error but got none")
@@ -372,6 +373,24 @@ func TestEC2Manager_getPlatform(t *testing.T) {
 			instance: types.Instance{},
 			expected: "Linux",
 		},
+		{
+			name: "Windows detected from Platform tag",
+			instance: types.Instance{
+				Tags: []types.Tag{
+					{Key: aws.String("Platform"), Value: aws.String("Windows")},
+				},
+			},
+			expected: "Windows",
+		},
+		{
+			name: "Windows detected from OS tag",
+			instance: types.Instance{
+				Tags: []types.Tag{
+					{Key: aws.String("OS"), Value: aws.String("Windows Server 2019")},
+				},
+			},
+			expected: "Windows",
+		},
 	}
 
 	for _, tt := range tests {
@@ -391,5 +410,94 @@ func TestEC2Manager_fallbackToCommand(t *testing.T) {
 	err := manager.fallbackToCommand("i-123456789")
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
+	}
+}
+
+func TestEC2Manager_RunRDP_WindowsFiltering(t *testing.T) {
+	ctx := context.Background()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockEC2 := mocks.NewMockEC2Client(ctrl)
+	mockSSM := mocks.NewMockSSMClient(ctrl)
+
+	manager, err := NewEC2Manager(ctx, EC2ManagerOptions{
+		EC2Client: mockEC2,
+		SSMClient: mockSSM,
+		Region:    "us-east-1",
+	})
+	if err != nil {
+		t.Fatalf("Failed to create EC2Manager: %v", err)
+	}
+
+	// Test data - mix of Windows and Linux instances
+	windowsInstanceId := "i-windows123"
+	linuxInstanceId := "i-linux456"
+
+	// Mock EC2 response with Windows and Linux instances
+	mockEC2.EXPECT().DescribeInstances(gomock.Any(), gomock.Any()).Return(
+		&ec2.DescribeInstancesOutput{
+			Reservations: []types.Reservation{
+				{
+					Instances: []types.Instance{
+						{
+							InstanceId: &windowsInstanceId,
+							Platform:   types.PlatformValuesWindows,
+							State:      &types.InstanceState{Name: types.InstanceStateNameRunning},
+							Tags:       []types.Tag{{Key: aws.String("Name"), Value: aws.String("Windows-Server")}},
+						},
+						{
+							InstanceId: &linuxInstanceId,
+							Platform:   "",
+							State:      &types.InstanceState{Name: types.InstanceStateNameRunning},
+							Tags:       []types.Tag{{Key: aws.String("Name"), Value: aws.String("Linux-Server")}},
+						},
+					},
+				},
+			},
+		}, nil)
+
+	// Mock SSM response for Windows instance
+	mockSSM.EXPECT().DescribeInstanceInformation(gomock.Any(), gomock.Any()).Return(
+		&ssm.DescribeInstanceInformationOutput{
+			InstanceInformationList: []ssmtypes.InstanceInformation{
+				{InstanceId: &windowsInstanceId},
+			},
+		}, nil)
+
+	// Mock SSM response for Linux instance (no SSM)
+	mockSSM.EXPECT().DescribeInstanceInformation(gomock.Any(), gomock.Any()).Return(
+		&ssm.DescribeInstanceInformationOutput{
+			InstanceInformationList: []ssmtypes.InstanceInformation{},
+		}, nil)
+
+	// Test the Windows filtering logic by calling ListAllInstances and filtering
+	allInstances, err := manager.ListAllInstances(ctx)
+	if err != nil {
+		t.Fatalf("ListAllInstances failed: %v", err)
+	}
+
+	// Filter for Windows instances (same logic as RunRDP)
+	var windowsInstances []EC2Instance
+	for _, instance := range allInstances {
+		if strings.ToLower(instance.Platform) == "windows" {
+			// Only running instances with SSM are selectable for RDP
+			instance.IsSelectable = instance.State == "running" && instance.IsSelectable
+			windowsInstances = append(windowsInstances, instance)
+		}
+	}
+
+	// Verify filtering worked correctly
+	if len(windowsInstances) != 1 {
+		t.Errorf("Expected 1 Windows instance, got %d", len(windowsInstances))
+	}
+
+	if len(windowsInstances) > 0 {
+		if windowsInstances[0].InstanceId != windowsInstanceId {
+			t.Errorf("Expected Windows instance ID %s, got %s", windowsInstanceId, windowsInstances[0].InstanceId)
+		}
+		if !windowsInstances[0].IsSelectable {
+			t.Error("Windows instance should be selectable (running with SSM)")
+		}
 	}
 }

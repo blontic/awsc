@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -67,54 +68,79 @@ func (e *EC2Manager) RunConnect(ctx context.Context) error {
 	// Display AWS context
 	DisplayAWSContext(ctx)
 
-	// List EC2 instances with SSM capability
-	instances, err := e.ListSSMInstances(ctx)
+	// List all EC2 instances (show stopped ones as non-selectable)
+	instances, err := e.ListAllInstances(ctx)
 	if err != nil {
 		return fmt.Errorf("error listing EC2 instances: %v", err)
 	}
 
 	if len(instances) == 0 {
-		return fmt.Errorf("no EC2 instances with SSM agent found")
+		return fmt.Errorf("no EC2 instances found")
 	}
 
-	// Create instance options for selection
-	instanceOptions := make([]string, len(instances))
-	for i, instance := range instances {
+	// Check if any instances are selectable
+	hasSelectable := false
+	for _, instance := range instances {
 		if instance.IsSelectable {
-			instanceOptions[i] = fmt.Sprintf("%s (%s) - %s - %s", instance.Name, instance.InstanceId, instance.Platform, instance.State)
-		} else {
-			instanceOptions[i] = fmt.Sprintf("%s (%s) - %s - %s (unavailable)", instance.Name, instance.InstanceId, instance.Platform, instance.State)
+			hasSelectable = true
+			break
 		}
 	}
 
-	// Create selectability array
-	selectableOptions := make([]bool, len(instances))
-	for i, instance := range instances {
-		selectableOptions[i] = instance.IsSelectable
+	if !hasSelectable {
+		return fmt.Errorf("no running EC2 instances with SSM agent found - you may need to start an instance")
 	}
 
-	// Interactive instance selection
-	selectedIndex, err := ui.RunSelectorWithSelectability("Select EC2 Instance:", instanceOptions, selectableOptions)
+	// Select instance
+	selectedInstance, err := e.selectInstance("Select EC2 Instance:", instances)
 	if err != nil {
-		return fmt.Errorf("error selecting instance: %v", err)
+		return err
 	}
-	if selectedIndex == -1 {
-		return fmt.Errorf("no instance selected")
-	}
-
-	selectedInstance := instances[selectedIndex]
-	fmt.Printf("Selected: %s\n", selectedInstance.Name)
 
 	// Check if Windows instance and offer RDP option
-	if selectedInstance.Platform == "Windows" {
-		return e.handleWindowsConnection(ctx, selectedInstance)
+	if strings.ToLower(selectedInstance.Platform) == "windows" {
+		return e.handleWindowsConnection(ctx, *selectedInstance)
 	}
 
 	// Start SSM session for non-Windows instances
 	return e.StartSSMSession(ctx, selectedInstance.InstanceId)
 }
 
-func (e *EC2Manager) ListSSMInstances(ctx context.Context) ([]EC2Instance, error) {
+func (e *EC2Manager) RunRDP(ctx context.Context) error {
+	// Display AWS context
+	DisplayAWSContext(ctx)
+
+	// List all instances and filter for Windows ones
+	allInstances, err := e.ListAllInstances(ctx)
+	if err != nil {
+		return fmt.Errorf("error listing EC2 instances: %v", err)
+	}
+
+	// Filter for Windows instances (include stopped ones but mark as non-selectable)
+	var windowsInstances []EC2Instance
+	for _, instance := range allInstances {
+		if strings.ToLower(instance.Platform) == "windows" {
+			// Only running instances with SSM are selectable for RDP
+			instance.IsSelectable = instance.State == "running" && instance.IsSelectable
+			windowsInstances = append(windowsInstances, instance)
+		}
+	}
+
+	if len(windowsInstances) == 0 {
+		return fmt.Errorf("no Windows EC2 instances found")
+	}
+
+	// Select Windows instance
+	selectedInstance, err := e.selectInstance("Select Windows EC2 Instance:", windowsInstances)
+	if err != nil {
+		return err
+	}
+
+	// Start RDP port forwarding
+	return e.startRDPPortForwarding(ctx, selectedInstance.InstanceId)
+}
+
+func (e *EC2Manager) ListAllInstances(ctx context.Context) ([]EC2Instance, error) {
 	var allReservations []types.Reservation
 	var nextToken *string
 
@@ -156,6 +182,7 @@ func (e *EC2Manager) ListSSMInstances(ctx context.Context) ([]EC2Instance, error
 	for _, reservation := range allReservations {
 		for _, instance := range reservation.Instances {
 			isRunning := string(instance.State.Name) == "running"
+			// Only check SSM for running instances to avoid unnecessary API calls
 			hasSSM := isRunning && e.hasSSMAgent(ctx, *instance.InstanceId)
 
 			instances = append(instances, EC2Instance{
@@ -164,7 +191,7 @@ func (e *EC2Manager) ListSSMInstances(ctx context.Context) ([]EC2Instance, error
 				InstanceType: string(instance.InstanceType),
 				State:        string(instance.State.Name),
 				Platform:     e.getPlatform(instance),
-				IsSelectable: hasSSM,
+				IsSelectable: hasSSM, // Only running instances with SSM are selectable
 			})
 		}
 	}
@@ -244,9 +271,30 @@ func (e *EC2Manager) getInstanceName(tags []types.Tag) string {
 }
 
 func (e *EC2Manager) getPlatform(instance types.Instance) string {
+	// Check platform field first
 	if instance.Platform != "" {
 		return string(instance.Platform)
 	}
+
+	// Check AMI name for Windows indicators
+	if instance.ImageId != nil {
+		// This is a simplified check - in practice you might want to describe the AMI
+		// But we can also check instance metadata or tags
+	}
+
+	// Check for Windows-specific instance types or other indicators
+	// For now, check if it's a known Windows AMI pattern or has Windows in tags
+	for _, tag := range instance.Tags {
+		if tag.Key != nil && tag.Value != nil {
+			if *tag.Key == "Platform" && *tag.Value == "Windows" {
+				return "Windows"
+			}
+			if *tag.Key == "OS" && strings.Contains(strings.ToLower(*tag.Value), "windows") {
+				return "Windows"
+			}
+		}
+	}
+
 	// Default to Linux if no platform specified
 	return "Linux"
 }
@@ -307,6 +355,37 @@ func (e *EC2Manager) reloadClients(ctx context.Context) error {
 	e.region = cfg.Region
 
 	return nil
+}
+
+func (e *EC2Manager) selectInstance(title string, instances []EC2Instance) (*EC2Instance, error) {
+	// Create instance options for selection
+	instanceOptions := make([]string, len(instances))
+	for i, instance := range instances {
+		if instance.IsSelectable {
+			instanceOptions[i] = fmt.Sprintf("%s (%s) - %s - %s", instance.Name, instance.InstanceId, instance.Platform, instance.State)
+		} else {
+			instanceOptions[i] = fmt.Sprintf("%s (%s) - %s - %s (unavailable)", instance.Name, instance.InstanceId, instance.Platform, instance.State)
+		}
+	}
+
+	// Create selectability array
+	selectableOptions := make([]bool, len(instances))
+	for i, instance := range instances {
+		selectableOptions[i] = instance.IsSelectable
+	}
+
+	// Interactive instance selection
+	selectedIndex, err := ui.RunSelectorWithSelectability(title, instanceOptions, selectableOptions)
+	if err != nil {
+		return nil, fmt.Errorf("error selecting instance: %v", err)
+	}
+	if selectedIndex == -1 {
+		return nil, fmt.Errorf("no instance selected")
+	}
+
+	selectedInstance := instances[selectedIndex]
+	fmt.Printf("Selected: %s\n", selectedInstance.Name)
+	return &selectedInstance, nil
 }
 
 func (e *EC2Manager) fallbackToCommand(instanceId string) error {
