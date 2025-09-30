@@ -228,7 +228,7 @@ func (r *RDSManager) FindBastionHosts(ctx context.Context, rdsInstance RDSInstan
 							Name:   aws.String("instance-state-name"),
 							Values: []string{"running"},
 						},
-						},
+					},
 					NextToken: nextToken,
 				})
 				if err != nil {
