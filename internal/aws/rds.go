@@ -11,15 +11,27 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/rds"
+	rdstypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
 	ssmservice "github.com/aws/aws-sdk-go-v2/service/ssm"
 	swaconfig "github.com/blontic/swa/internal/config"
 	"github.com/blontic/swa/internal/debug"
 	"github.com/blontic/swa/internal/ui"
 )
 
+// RDSClient interface for mocking
+type RDSClient interface {
+	DescribeDBInstances(ctx context.Context, params *rds.DescribeDBInstancesInput, optFns ...func(*rds.Options)) (*rds.DescribeDBInstancesOutput, error)
+}
+
+// EC2Client interface for mocking
+type EC2Client interface {
+	DescribeInstances(ctx context.Context, params *ec2.DescribeInstancesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error)
+	DescribeSecurityGroups(ctx context.Context, params *ec2.DescribeSecurityGroupsInput, optFns ...func(*ec2.Options)) (*ec2.DescribeSecurityGroupsOutput, error)
+}
+
 type RDSManager struct {
-	rdsClient *rds.Client
-	ec2Client *ec2.Client
+	rdsClient RDSClient
+	ec2Client EC2Client
 	ssmClient *ssmservice.Client
 	region    string
 }
@@ -37,7 +49,25 @@ type BastionHost struct {
 	SecurityGroupIds []string
 }
 
-func NewRDSManager(ctx context.Context) (*RDSManager, error) {
+type RDSManagerOptions struct {
+	RDSClient RDSClient
+	EC2Client EC2Client
+	SSMClient *ssmservice.Client
+	Region    string
+}
+
+func NewRDSManager(ctx context.Context, opts ...RDSManagerOptions) (*RDSManager, error) {
+	if len(opts) > 0 && opts[0].RDSClient != nil {
+		// Use provided clients (for testing)
+		return &RDSManager{
+			rdsClient: opts[0].RDSClient,
+			ec2Client: opts[0].EC2Client,
+			ssmClient: opts[0].SSMClient,
+			region:    opts[0].Region,
+		}, nil
+	}
+
+	// Production path
 	cfg, err := swaconfig.LoadSWAConfigWithProfile(ctx)
 	if err != nil {
 		return nil, err
@@ -107,30 +137,47 @@ func (r *RDSManager) RunConnect(ctx context.Context, localPort int32) error {
 }
 
 func (r *RDSManager) ListRDSInstances(ctx context.Context) ([]RDSInstance, error) {
-	result, err := r.rdsClient.DescribeDBInstances(ctx, &rds.DescribeDBInstancesInput{})
-	if err != nil {
-		if IsAuthError(err) {
-			if handleErr := HandleExpiredCredentials(ctx); handleErr != nil {
-				return nil, handleErr
-			}
-			// Reload client with fresh credentials
-			cfg, cfgErr := swaconfig.LoadSWAConfigWithProfile(ctx)
-			if cfgErr != nil {
-				return nil, cfgErr
-			}
-			r.rdsClient = rds.NewFromConfig(cfg)
-			// Retry after re-authentication
-			result, err = r.rdsClient.DescribeDBInstances(ctx, &rds.DescribeDBInstancesInput{})
-			if err != nil {
+	var allDBInstances []rdstypes.DBInstance
+	var marker *string
+
+	for {
+		result, err := r.rdsClient.DescribeDBInstances(ctx, &rds.DescribeDBInstancesInput{
+			Marker: marker,
+		})
+		if err != nil {
+			if IsAuthError(err) {
+				if handleErr := HandleExpiredCredentials(ctx); handleErr != nil {
+					return nil, handleErr
+				}
+				// Reload client with fresh credentials
+				cfg, cfgErr := swaconfig.LoadSWAConfigWithProfile(ctx)
+				if cfgErr != nil {
+					return nil, cfgErr
+				}
+				r.rdsClient = rds.NewFromConfig(cfg)
+				// Retry after re-authentication
+				result, err = r.rdsClient.DescribeDBInstances(ctx, &rds.DescribeDBInstancesInput{
+					Marker: marker,
+				})
+				if err != nil {
+					return nil, err
+				}
+			} else {
 				return nil, err
 			}
-		} else {
-			return nil, err
 		}
+
+		allDBInstances = append(allDBInstances, result.DBInstances...)
+
+		// Check if there are more pages
+		if result.Marker == nil {
+			break
+		}
+		marker = result.Marker
 	}
 
 	var instances []RDSInstance
-	for _, db := range result.DBInstances {
+	for _, db := range allDBInstances {
 		if db.DBInstanceStatus != nil && *db.DBInstanceStatus == "available" {
 			instances = append(instances, RDSInstance{
 				Identifier: *db.DBInstanceIdentifier,
@@ -154,27 +201,41 @@ func (r *RDSManager) FindBastionHosts(ctx context.Context, rdsInstance RDSInstan
 	debug.Printf("RDS %s security groups: %v\n", rdsInstance.Identifier, rdsSecurityGroups)
 
 	// Find EC2 instances that can connect to RDS
-	result, err := r.ec2Client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
-		Filters: []types.Filter{
-			{
-				Name:   aws.String("instance-state-name"),
-				Values: []string{"running"},
+	var allReservations []types.Reservation
+	var nextToken *string
+
+	for {
+		result, err := r.ec2Client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+			Filters: []types.Filter{
+				{
+					Name:   aws.String("instance-state-name"),
+					Values: []string{"running"},
+				},
 			},
-		},
-	})
-	if err != nil {
-		return nil, err
+			NextToken: nextToken,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		allReservations = append(allReservations, result.Reservations...)
+
+		// Check if there are more pages
+		if result.NextToken == nil {
+			break
+		}
+		nextToken = result.NextToken
 	}
 
 	// Count total instances across all reservations
 	totalInstances := 0
-	for _, reservation := range result.Reservations {
+	for _, reservation := range allReservations {
 		totalInstances += len(reservation.Instances)
 	}
 	debug.Printf("Found %d running EC2 instances\n", totalInstances)
 
 	var bastions []BastionHost
-	for _, reservation := range result.Reservations {
+	for _, reservation := range allReservations {
 		for _, instance := range reservation.Instances {
 			name := r.getInstanceName(instance.Tags)
 			ec2SgIds := r.getSecurityGroupIds(instance.SecurityGroups)

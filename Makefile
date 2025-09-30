@@ -1,4 +1,4 @@
-.PHONY: build clean test test-verbose test-coverage run deps install build-all fmt
+.PHONY: build clean test test-verbose test-coverage run deps install build-all fmt mocks
 
 # Version variables
 VERSION ?= $(shell git describe --tags --always --dirty)
@@ -51,6 +51,12 @@ fmt:
 install:
 	go install
 
+# Generate mocks for testing
+mocks:
+	rm -rf internal/aws/mocks
+	mkdir -p internal/aws/mocks
+	cd internal/aws && go run go.uber.org/mock/mockgen -destination=mocks/aws_mocks.go -package=mocks . RDSClient,EC2Client,SSMClient,SecretsManagerClient
+
 # Development workflow: build and test
-dev: deps test build
+dev: mocks deps test build
 	@echo "Development build complete"

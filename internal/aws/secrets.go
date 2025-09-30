@@ -7,12 +7,19 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
+	secretstypes "github.com/aws/aws-sdk-go-v2/service/secretsmanager/types"
 	swaconfig "github.com/blontic/swa/internal/config"
 	"github.com/blontic/swa/internal/ui"
 )
 
+// SecretsManagerClient interface for mocking
+type SecretsManagerClient interface {
+	ListSecrets(ctx context.Context, params *secretsmanager.ListSecretsInput, optFns ...func(*secretsmanager.Options)) (*secretsmanager.ListSecretsOutput, error)
+	GetSecretValue(ctx context.Context, params *secretsmanager.GetSecretValueInput, optFns ...func(*secretsmanager.Options)) (*secretsmanager.GetSecretValueOutput, error)
+}
+
 type SecretsManager struct {
-	client *secretsmanager.Client
+	client SecretsManagerClient
 	region string
 }
 
@@ -22,7 +29,21 @@ type Secret struct {
 	ARN         string
 }
 
-func NewSecretsManager(ctx context.Context) (*SecretsManager, error) {
+type SecretsManagerOptions struct {
+	Client SecretsManagerClient
+	Region string
+}
+
+func NewSecretsManager(ctx context.Context, opts ...SecretsManagerOptions) (*SecretsManager, error) {
+	if len(opts) > 0 && opts[0].Client != nil {
+		// Use provided client (for testing)
+		return &SecretsManager{
+			client: opts[0].Client,
+			region: opts[0].Region,
+		}, nil
+	}
+
+	// Production path
 	cfg, err := swaconfig.LoadSWAConfigWithProfile(ctx)
 	if err != nil {
 		return nil, err
@@ -35,30 +56,47 @@ func NewSecretsManager(ctx context.Context) (*SecretsManager, error) {
 }
 
 func (s *SecretsManager) ListSecrets(ctx context.Context) ([]Secret, error) {
-	result, err := s.client.ListSecrets(ctx, &secretsmanager.ListSecretsInput{})
-	if err != nil {
-		if IsAuthError(err) {
-			if handleErr := HandleExpiredCredentials(ctx); handleErr != nil {
-				return nil, handleErr
-			}
-			// Reload client with fresh credentials
-			cfg, cfgErr := swaconfig.LoadSWAConfigWithProfile(ctx)
-			if cfgErr != nil {
-				return nil, cfgErr
-			}
-			s.client = secretsmanager.NewFromConfig(cfg)
-			// Retry after re-authentication
-			result, err = s.client.ListSecrets(ctx, &secretsmanager.ListSecretsInput{})
-			if err != nil {
+	var allSecrets []secretstypes.SecretListEntry
+	var nextToken *string
+
+	for {
+		result, err := s.client.ListSecrets(ctx, &secretsmanager.ListSecretsInput{
+			NextToken: nextToken,
+		})
+		if err != nil {
+			if IsAuthError(err) {
+				if handleErr := HandleExpiredCredentials(ctx); handleErr != nil {
+					return nil, handleErr
+				}
+				// Reload client with fresh credentials
+				cfg, cfgErr := swaconfig.LoadSWAConfigWithProfile(ctx)
+				if cfgErr != nil {
+					return nil, cfgErr
+				}
+				s.client = secretsmanager.NewFromConfig(cfg)
+				// Retry after re-authentication
+				result, err = s.client.ListSecrets(ctx, &secretsmanager.ListSecretsInput{
+					NextToken: nextToken,
+				})
+				if err != nil {
+					return nil, err
+				}
+			} else {
 				return nil, err
 			}
-		} else {
-			return nil, err
 		}
+
+		allSecrets = append(allSecrets, result.SecretList...)
+
+		// Check if there are more pages
+		if result.NextToken == nil {
+			break
+		}
+		nextToken = result.NextToken
 	}
 
 	var secrets []Secret
-	for _, secret := range result.SecretList {
+	for _, secret := range allSecrets {
 		description := ""
 		if secret.Description != nil {
 			description = *secret.Description

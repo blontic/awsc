@@ -18,6 +18,9 @@
 ## AWS SDK Usage
 - See `implementation-preferences.md` for detailed AWS SDK patterns
 - See `native-implementation.md` for SSM-specific implementation
+- **MANDATORY**: All AWS list/describe operations must handle pagination
+- **Pattern**: Use for loop with NextToken/Marker until no more pages
+- **Never assume single page**: AWS APIs are paginated by default
 
 ## Project Structure
 - `cmd/` - Cobra commands only
@@ -44,6 +47,12 @@
 - **Handle credential errors gracefully** - show helpful SSO login message
 - **Respect existing profiles** - work with user's current AWS setup
 - **Pattern**: Create manager → Try operation → Handle auth errors → Guide user
+
+## SSO Login Behavior
+- **`swa login`**: Always show account/role selection if SSO token exists (even if AWS creds valid)
+- **`swa login --force`**: Force browser re-authentication, skip cached token entirely
+- **Token validation**: Never check expiration times - let API calls fail and handle gracefully
+- **Failure handling**: When SSO API fails, automatically trigger full re-authentication flow
 
 ## CLI Consistency
 - **Global flags**: `--region` and `--config` available on all commands
@@ -77,3 +86,11 @@
 - Test public functions and methods
 - Use `t.TempDir()` for file system tests
 - Run tests with `go test ./...`
+
+## Constructor Testing Pattern
+- **MANDATORY**: Use optional parameter pattern for all manager constructors
+- **NEVER** create separate `NewManagerWithClients` functions
+- Pattern: `NewManager(ctx context.Context, opts ...ManagerOptions) (*Manager, error)`
+- Test usage: `NewManager(ctx, ManagerOptions{Client: mockClient, Region: "region"})`
+- Production usage: `NewManager(ctx)` - no options needed
+- Keeps test-only code out of production files

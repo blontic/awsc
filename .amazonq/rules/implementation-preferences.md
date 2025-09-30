@@ -8,9 +8,12 @@
   - `LoadSWAConfig(ctx)`: For service operations (swa profile + region override)
 - Create service clients from config: `service.NewFromConfig(cfg)`
 - Pass context to all AWS API calls
+- **ALWAYS handle pagination**: All AWS list/describe operations must handle NextToken/Marker pagination
 - For SSM operations: Use StartSession to create sessions, external plugin for protocol
-- For RDS operations: Use DescribeDBInstances for listing instances
-- For EC2 operations: Use DescribeInstances, DescribeSecurityGroups for bastion discovery
+- For RDS operations: Use DescribeDBInstances for listing instances (with Marker pagination)
+- For EC2 operations: Use DescribeInstances, DescribeSecurityGroups for bastion discovery (with NextToken pagination)
+- For SSO operations: Use ListAccounts, ListAccountRoles (with NextToken pagination)
+- For Secrets operations: Use ListSecrets (with NextToken pagination)
 
 ## SSM Operations
 - **External plugin approach**: Use official session-manager-plugin binary
@@ -56,6 +59,21 @@
 - **IsAuthError()**: Detect authentication/credential errors in AWS responses
 - **Clean separation**: Authentication logic in CredentialsManager, listing in SSOManager
 - **Profile isolation**: Keep swa credentials separate from user's existing AWS setup
+
+## SSO Token Handling
+- **Never check token expiration**: Let AWS API calls fail naturally instead of predicting expiration
+- **Try-and-handle approach**: Attempt to use cached token, handle failure by re-authenticating
+- **No expiration logic**: AWS knows better than us when tokens are invalid
+- **Graceful failure**: When SSO API calls fail, automatically trigger browser re-authentication
+- **Simple caching**: Store tokens but don't validate expiration times locally
+
+## Constructor Pattern (MANDATORY)
+- **Always use optional parameters**: `func NewManager(ctx context.Context, opts ...ManagerOptions)`
+- **Never separate test constructors**: No `NewManagerWithClients` functions
+- **Options struct**: Create `ManagerOptions` with all injectable dependencies
+- **Production path**: `if len(opts) == 0 || opts[0].Client == nil` - load real clients
+- **Test path**: `if len(opts) > 0 && opts[0].Client != nil` - use provided mocks
+- **Clean separation**: Test dependencies injected via options, not separate functions
 
 ## Global Options
 - **Region override**: `--region` flag available on all commands to override config region

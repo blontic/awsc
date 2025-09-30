@@ -28,30 +28,58 @@ func NewSSOManager(ctx context.Context) (*SSOManager, error) {
 }
 
 func (s *SSOManager) ListAccounts(ctx context.Context, accessToken string) ([]types.AccountInfo, error) {
-	input := &sso.ListAccountsInput{
-		AccessToken: &accessToken,
+	var allAccounts []types.AccountInfo
+	var nextToken *string
+
+	for {
+		input := &sso.ListAccountsInput{
+			AccessToken: &accessToken,
+			NextToken:   nextToken,
+		}
+
+		result, err := s.client.ListAccounts(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+
+		allAccounts = append(allAccounts, result.AccountList...)
+
+		// Check if there are more pages
+		if result.NextToken == nil {
+			break
+		}
+		nextToken = result.NextToken
 	}
 
-	result, err := s.client.ListAccounts(ctx, input)
-	if err != nil {
-		return nil, err
-	}
-
-	return result.AccountList, nil
+	return allAccounts, nil
 }
 
 func (s *SSOManager) ListRoles(ctx context.Context, accessToken, accountId string) ([]types.RoleInfo, error) {
-	input := &sso.ListAccountRolesInput{
-		AccessToken: &accessToken,
-		AccountId:   &accountId,
+	var allRoles []types.RoleInfo
+	var nextToken *string
+
+	for {
+		input := &sso.ListAccountRolesInput{
+			AccessToken: &accessToken,
+			AccountId:   &accountId,
+			NextToken:   nextToken,
+		}
+
+		result, err := s.client.ListAccountRoles(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+
+		allRoles = append(allRoles, result.RoleList...)
+
+		// Check if there are more pages
+		if result.NextToken == nil {
+			break
+		}
+		nextToken = result.NextToken
 	}
 
-	result, err := s.client.ListAccountRoles(ctx, input)
-	if err != nil {
-		return nil, err
-	}
-
-	return result.RoleList, nil
+	return allRoles, nil
 }
 
 func (s *SSOManager) GetRoleCredentials(ctx context.Context, accessToken, accountId, roleName string) (*types.RoleCredentials, error) {
@@ -87,15 +115,14 @@ func (s *SSOManager) RunLogin(ctx context.Context, force bool) error {
 		return fmt.Errorf("failed to create credentials manager: %v", err)
 	}
 
-	// Skip token check if force is true
+	// Try to get cached SSO token and use it if valid (unless force is true)
 	if !force {
-		// Try to get access token and list accounts first
 		accessToken, err := credentialsManager.GetCachedToken()
 		if err == nil {
-			// Try listing accounts to see if credentials work
+			// Try listing accounts to see if SSO token works
 			accounts, listErr := s.ListAccounts(ctx, *accessToken)
 			if listErr == nil && len(accounts) > 0 {
-				// Credentials work, proceed with account/role selection
+				// SSO token works, proceed with account/role selection
 				return s.handleAccountRoleSelection(ctx, *accessToken, accounts)
 			}
 		}

@@ -14,9 +14,14 @@ import (
 	"github.com/blontic/swa/internal/ui"
 )
 
+// SSMClient interface for mocking
+type SSMClient interface {
+	DescribeInstanceInformation(ctx context.Context, params *ssm.DescribeInstanceInformationInput, optFns ...func(*ssm.Options)) (*ssm.DescribeInstanceInformationOutput, error)
+}
+
 type EC2Manager struct {
-	ec2Client *ec2.Client
-	ssmClient *ssm.Client
+	ec2Client EC2Client
+	ssmClient SSMClient
 	region    string
 }
 
@@ -25,9 +30,27 @@ type EC2Instance struct {
 	Name         string
 	InstanceType string
 	State        string
+	Platform     string
+	IsSelectable bool
 }
 
-func NewEC2Manager(ctx context.Context) (*EC2Manager, error) {
+type EC2ManagerOptions struct {
+	EC2Client EC2Client
+	SSMClient SSMClient
+	Region    string
+}
+
+func NewEC2Manager(ctx context.Context, opts ...EC2ManagerOptions) (*EC2Manager, error) {
+	if len(opts) > 0 && opts[0].EC2Client != nil {
+		// Use provided clients (for testing)
+		return &EC2Manager{
+			ec2Client: opts[0].EC2Client,
+			ssmClient: opts[0].SSMClient,
+			region:    opts[0].Region,
+		}, nil
+	}
+
+	// Production path
 	cfg, err := swaconfig.LoadSWAConfigWithProfile(ctx)
 	if err != nil {
 		return nil, err
@@ -57,11 +80,21 @@ func (e *EC2Manager) RunConnect(ctx context.Context) error {
 	// Create instance options for selection
 	instanceOptions := make([]string, len(instances))
 	for i, instance := range instances {
-		instanceOptions[i] = fmt.Sprintf("%s (%s) - %s", instance.Name, instance.InstanceId, instance.State)
+		if instance.IsSelectable {
+			instanceOptions[i] = fmt.Sprintf("%s (%s) - %s - %s", instance.Name, instance.InstanceId, instance.Platform, instance.State)
+		} else {
+			instanceOptions[i] = fmt.Sprintf("%s (%s) - %s - %s (unavailable)", instance.Name, instance.InstanceId, instance.Platform, instance.State)
+		}
+	}
+
+	// Create selectability array
+	selectableOptions := make([]bool, len(instances))
+	for i, instance := range instances {
+		selectableOptions[i] = instance.IsSelectable
 	}
 
 	// Interactive instance selection
-	selectedIndex, err := ui.RunSelector("Select EC2 Instance:", instanceOptions)
+	selectedIndex, err := ui.RunSelectorWithSelectability("Select EC2 Instance:", instanceOptions, selectableOptions)
 	if err != nil {
 		return fmt.Errorf("error selecting instance: %v", err)
 	}
@@ -72,59 +105,69 @@ func (e *EC2Manager) RunConnect(ctx context.Context) error {
 	selectedInstance := instances[selectedIndex]
 	fmt.Printf("Selected: %s\n", selectedInstance.Name)
 
-	// Start SSM session
+	// Check if Windows instance and offer RDP option
+	if selectedInstance.Platform == "Windows" {
+		return e.handleWindowsConnection(ctx, selectedInstance)
+	}
+
+	// Start SSM session for non-Windows instances
 	return e.StartSSMSession(ctx, selectedInstance.InstanceId)
 }
 
 func (e *EC2Manager) ListSSMInstances(ctx context.Context) ([]EC2Instance, error) {
-	result, err := e.ec2Client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
-		Filters: []types.Filter{
-			{
-				Name:   aws.String("instance-state-name"),
-				Values: []string{"running"},
-			},
-		},
-	})
-	if err != nil {
-		if IsAuthError(err) {
-			if handleErr := HandleExpiredCredentials(ctx); handleErr != nil {
-				return nil, handleErr
-			}
-			// Reload client with fresh credentials
-			cfg, cfgErr := swaconfig.LoadSWAConfigWithProfile(ctx)
-			if cfgErr != nil {
-				return nil, cfgErr
-			}
-			e.ec2Client = ec2.NewFromConfig(cfg)
-			// Retry after re-authentication
-			result, err = e.ec2Client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
-				Filters: []types.Filter{
-					{
-						Name:   aws.String("instance-state-name"),
-						Values: []string{"running"},
-					},
-				},
-			})
-			if err != nil {
+	var allReservations []types.Reservation
+	var nextToken *string
+
+	for {
+		result, err := e.ec2Client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+			NextToken: nextToken,
+		})
+		if err != nil {
+			if IsAuthError(err) {
+				if handleErr := HandleExpiredCredentials(ctx); handleErr != nil {
+					return nil, handleErr
+				}
+				// Reload client with fresh credentials
+				cfg, cfgErr := swaconfig.LoadSWAConfigWithProfile(ctx)
+				if cfgErr != nil {
+					return nil, cfgErr
+				}
+				e.ec2Client = ec2.NewFromConfig(cfg)
+				// Retry after re-authentication
+				result, err = e.ec2Client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+					NextToken: nextToken,
+				})
+				if err != nil {
+					return nil, err
+				}
+			} else {
 				return nil, err
 			}
-		} else {
-			return nil, err
 		}
+
+		allReservations = append(allReservations, result.Reservations...)
+
+		// Check if there are more pages
+		if result.NextToken == nil {
+			break
+		}
+		nextToken = result.NextToken
 	}
 
 	var instances []EC2Instance
-	for _, reservation := range result.Reservations {
+	for _, reservation := range allReservations {
 		for _, instance := range reservation.Instances {
-			// Check if instance has SSM agent (has managed instance)
-			if e.hasSSMAgent(ctx, *instance.InstanceId) {
-				instances = append(instances, EC2Instance{
-					InstanceId:   *instance.InstanceId,
-					Name:         e.getInstanceName(instance.Tags),
-					InstanceType: string(instance.InstanceType),
-					State:        string(instance.State.Name),
-				})
-			}
+			isRunning := string(instance.State.Name) == "running"
+			hasSSM := isRunning && e.hasSSMAgent(ctx, *instance.InstanceId)
+
+			instances = append(instances, EC2Instance{
+				InstanceId:   *instance.InstanceId,
+				Name:         e.getInstanceName(instance.Tags),
+				InstanceType: string(instance.InstanceType),
+				State:        string(instance.State.Name),
+				Platform:     e.getPlatform(instance),
+				IsSelectable: hasSSM,
+			})
 		}
 	}
 
@@ -178,6 +221,59 @@ func (e *EC2Manager) getInstanceName(tags []types.Tag) string {
 		}
 	}
 	return "Unnamed"
+}
+
+func (e *EC2Manager) getPlatform(instance types.Instance) string {
+	if instance.Platform != "" {
+		return string(instance.Platform)
+	}
+	// Default to Linux if no platform specified
+	return "Linux"
+}
+
+func (e *EC2Manager) handleWindowsConnection(ctx context.Context, instance EC2Instance) error {
+	fmt.Printf("\nWindows instance detected. Choose connection method:\n")
+	fmt.Printf("1. SSM Session (PowerShell)\n")
+	fmt.Printf("2. RDP Port Forwarding\n")
+	fmt.Printf("\nEnter choice (1 or 2): ")
+
+	var choice string
+	fmt.Scanln(&choice)
+
+	switch choice {
+	case "2":
+		return e.startRDPPortForwarding(ctx, instance.InstanceId)
+	default:
+		return e.StartSSMSession(ctx, instance.InstanceId)
+	}
+}
+
+func (e *EC2Manager) startRDPPortForwarding(ctx context.Context, instanceId string) error {
+	cfg, err := swaconfig.LoadSWAConfigWithProfile(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to load AWS config: %w", err)
+	}
+
+	pf := NewExternalPluginForwarder(cfg)
+	localPort := 3389
+	remotePort := 3389
+
+	fmt.Printf("Starting RDP port forwarding on localhost:%d...\n", localPort)
+
+	// Start port forwarding for RDP
+	err = pf.StartPortForwardingToRemoteHost(ctx, instanceId, "localhost", remotePort, localPort)
+	if err != nil {
+		fmt.Printf("RDP port forwarding failed: %v\n", err)
+		return e.fallbackToRDPCommand(instanceId)
+	}
+	return nil
+}
+
+func (e *EC2Manager) fallbackToRDPCommand(instanceId string) error {
+	fmt.Printf("\nRun this command manually for RDP port forwarding:\n\n")
+	fmt.Printf("aws ssm start-session --target %s --document-name AWS-StartPortForwardingSession --parameters '{\"portNumber\":[\"3389\"],\"localPortNumber\":[\"3389\"]}' --region %s\n\n", instanceId, e.region)
+	fmt.Printf("Then connect with RDP to: localhost:3389\n")
+	return nil
 }
 
 func (e *EC2Manager) fallbackToCommand(instanceId string) error {
