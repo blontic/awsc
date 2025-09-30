@@ -127,12 +127,10 @@ func (e *EC2Manager) ListSSMInstances(ctx context.Context) ([]EC2Instance, error
 				if handleErr := HandleExpiredCredentials(ctx); handleErr != nil {
 					return nil, handleErr
 				}
-				// Reload client with fresh credentials
-				cfg, cfgErr := swaconfig.LoadSWAConfigWithProfile(ctx)
-				if cfgErr != nil {
-					return nil, cfgErr
+				// Reload all clients with fresh credentials
+				if reloadErr := e.reloadClients(ctx); reloadErr != nil {
+					return nil, reloadErr
 				}
-				e.ec2Client = ec2.NewFromConfig(cfg)
 				// Retry after re-authentication
 				result, err = e.ec2Client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 					NextToken: nextToken,
@@ -208,7 +206,29 @@ func (e *EC2Manager) hasSSMAgent(ctx context.Context, instanceId string) bool {
 		},
 	})
 	if err != nil {
-		return false
+		if IsAuthError(err) {
+			if handleErr := HandleExpiredCredentials(ctx); handleErr != nil {
+				return false
+			}
+			// Reload all clients with fresh credentials
+			if reloadErr := e.reloadClients(ctx); reloadErr != nil {
+				return false
+			}
+			// Retry after re-authentication
+			result, err = e.ssmClient.DescribeInstanceInformation(ctx, &ssm.DescribeInstanceInformationInput{
+				Filters: []ssmtypes.InstanceInformationStringFilter{
+					{
+						Key:    aws.String("InstanceIds"),
+						Values: []string{instanceId},
+					},
+				},
+			})
+			if err != nil {
+				return false
+			}
+		} else {
+			return false
+		}
 	}
 
 	return len(result.InstanceInformationList) > 0
@@ -273,6 +293,19 @@ func (e *EC2Manager) fallbackToRDPCommand(instanceId string) error {
 	fmt.Printf("\nRun this command manually for RDP port forwarding:\n\n")
 	fmt.Printf("aws ssm start-session --target %s --document-name AWS-StartPortForwardingSession --parameters '{\"portNumber\":[\"3389\"],\"localPortNumber\":[\"3389\"]}' --region %s\n\n", instanceId, e.region)
 	fmt.Printf("Then connect with RDP to: localhost:3389\n")
+	return nil
+}
+
+func (e *EC2Manager) reloadClients(ctx context.Context) error {
+	cfg, err := swaconfig.LoadSWAConfigWithProfile(ctx)
+	if err != nil {
+		return err
+	}
+
+	e.ec2Client = ec2.NewFromConfig(cfg)
+	e.ssmClient = ssm.NewFromConfig(cfg)
+	e.region = cfg.Region
+
 	return nil
 }
 

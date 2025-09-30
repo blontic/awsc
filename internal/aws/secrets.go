@@ -69,11 +69,9 @@ func (s *SecretsManager) ListSecrets(ctx context.Context) ([]Secret, error) {
 					return nil, handleErr
 				}
 				// Reload client with fresh credentials
-				cfg, cfgErr := swaconfig.LoadSWAConfigWithProfile(ctx)
-				if cfgErr != nil {
-					return nil, cfgErr
+				if reloadErr := s.reloadClient(ctx); reloadErr != nil {
+					return nil, reloadErr
 				}
-				s.client = secretsmanager.NewFromConfig(cfg)
 				// Retry after re-authentication
 				result, err = s.client.ListSecrets(ctx, &secretsmanager.ListSecretsInput{
 					NextToken: nextToken,
@@ -117,7 +115,24 @@ func (s *SecretsManager) GetSecretValue(ctx context.Context, secretName string) 
 		SecretId: aws.String(secretName),
 	})
 	if err != nil {
-		return "", err
+		if IsAuthError(err) {
+			if handleErr := HandleExpiredCredentials(ctx); handleErr != nil {
+				return "", handleErr
+			}
+			// Reload client with fresh credentials
+			if reloadErr := s.reloadClient(ctx); reloadErr != nil {
+				return "", reloadErr
+			}
+			// Retry after re-authentication
+			result, err = s.client.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{
+				SecretId: aws.String(secretName),
+			})
+			if err != nil {
+				return "", err
+			}
+		} else {
+			return "", err
+		}
 	}
 
 	if result.SecretString != nil {
@@ -186,5 +201,17 @@ func (s *SecretsManager) RunListSecrets(ctx context.Context) error {
 
 	// Display the secret
 	s.DisplaySecret(ctx, selectedSecret, secretValue)
+	return nil
+}
+
+func (s *SecretsManager) reloadClient(ctx context.Context) error {
+	cfg, err := swaconfig.LoadSWAConfigWithProfile(ctx)
+	if err != nil {
+		return err
+	}
+
+	s.client = secretsmanager.NewFromConfig(cfg)
+	s.region = cfg.Region
+
 	return nil
 }

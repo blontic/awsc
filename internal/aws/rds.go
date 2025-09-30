@@ -149,12 +149,10 @@ func (r *RDSManager) ListRDSInstances(ctx context.Context) ([]RDSInstance, error
 				if handleErr := HandleExpiredCredentials(ctx); handleErr != nil {
 					return nil, handleErr
 				}
-				// Reload client with fresh credentials
-				cfg, cfgErr := swaconfig.LoadSWAConfigWithProfile(ctx)
-				if cfgErr != nil {
-					return nil, cfgErr
+				// Reload all clients with fresh credentials
+				if reloadErr := r.reloadClients(ctx); reloadErr != nil {
+					return nil, reloadErr
 				}
-				r.rdsClient = rds.NewFromConfig(cfg)
 				// Retry after re-authentication
 				result, err = r.rdsClient.DescribeDBInstances(ctx, &rds.DescribeDBInstancesInput{
 					Marker: marker,
@@ -215,7 +213,30 @@ func (r *RDSManager) FindBastionHosts(ctx context.Context, rdsInstance RDSInstan
 			NextToken: nextToken,
 		})
 		if err != nil {
-			return nil, err
+			if IsAuthError(err) {
+				if handleErr := HandleExpiredCredentials(ctx); handleErr != nil {
+					return nil, handleErr
+				}
+				// Reload all clients with fresh credentials
+				if reloadErr := r.reloadClients(ctx); reloadErr != nil {
+					return nil, reloadErr
+				}
+				// Retry after re-authentication
+				result, err = r.ec2Client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+					Filters: []types.Filter{
+						{
+							Name:   aws.String("instance-state-name"),
+							Values: []string{"running"},
+						},
+					},
+					NextToken: nextToken,
+				})
+				if err != nil {
+					return nil, err
+				}
+			} else {
+				return nil, err
+			}
 		}
 
 		allReservations = append(allReservations, result.Reservations...)
@@ -317,7 +338,24 @@ func (r *RDSManager) getRDSSecurityGroups(ctx context.Context, dbIdentifier stri
 		DBInstanceIdentifier: aws.String(dbIdentifier),
 	})
 	if err != nil {
-		return nil, err
+		if IsAuthError(err) {
+			if handleErr := HandleExpiredCredentials(ctx); handleErr != nil {
+				return nil, handleErr
+			}
+			// Reload all clients with fresh credentials
+			if reloadErr := r.reloadClients(ctx); reloadErr != nil {
+				return nil, reloadErr
+			}
+			// Retry after re-authentication
+			result, err = r.rdsClient.DescribeDBInstances(ctx, &rds.DescribeDBInstancesInput{
+				DBInstanceIdentifier: aws.String(dbIdentifier),
+			})
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			return nil, err
+		}
 	}
 
 	if len(result.DBInstances) == 0 {
@@ -353,8 +391,28 @@ func (r *RDSManager) checkSecurityGroupRules(ctx context.Context, rdsSgId string
 		GroupIds: []string{rdsSgId},
 	})
 	if err != nil {
-		debug.Printf("  Error describing security group %s: %v\n", rdsSgId, err)
-		return false
+		if IsAuthError(err) {
+			if handleErr := HandleExpiredCredentials(ctx); handleErr != nil {
+				debug.Printf("  Error handling expired credentials: %v\n", handleErr)
+				return false
+			}
+			// Reload all clients with fresh credentials
+			if reloadErr := r.reloadClients(ctx); reloadErr != nil {
+				debug.Printf("  Error reloading clients: %v\n", reloadErr)
+				return false
+			}
+			// Retry after re-authentication
+			result, err = r.ec2Client.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
+				GroupIds: []string{rdsSgId},
+			})
+			if err != nil {
+				debug.Printf("  Error describing security group %s after retry: %v\n", rdsSgId, err)
+				return false
+			}
+		} else {
+			debug.Printf("  Error describing security group %s: %v\n", rdsSgId, err)
+			return false
+		}
 	}
 
 	if len(result.SecurityGroups) == 0 {
@@ -421,4 +479,18 @@ func (r *RDSManager) getSecurityGroupIds(sgs []types.GroupIdentifier) []string {
 		ids = append(ids, *sg.GroupId)
 	}
 	return ids
+}
+
+func (r *RDSManager) reloadClients(ctx context.Context) error {
+	cfg, err := swaconfig.LoadSWAConfigWithProfile(ctx)
+	if err != nil {
+		return err
+	}
+
+	r.rdsClient = rds.NewFromConfig(cfg)
+	r.ec2Client = ec2.NewFromConfig(cfg)
+	r.ssmClient = ssmservice.NewFromConfig(cfg)
+	r.region = cfg.Region
+
+	return nil
 }
