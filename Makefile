@@ -4,7 +4,7 @@
 VERSION ?= $(shell git describe --tags --always --dirty)
 COMMIT ?= $(shell git rev-parse --short HEAD)
 DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
-LDFLAGS = -X github.com/blontic/swa/cmd.Version=$(VERSION) -X github.com/blontic/swa/cmd.Commit=$(COMMIT) -X github.com/blontic/swa/cmd.Date=$(DATE)
+LDFLAGS = -s -w -X github.com/blontic/swa/cmd.Version=$(VERSION) -X github.com/blontic/swa/cmd.Commit=$(COMMIT) -X github.com/blontic/swa/cmd.Date=$(DATE)
 
 # Build the binary
 build:
