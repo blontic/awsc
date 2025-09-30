@@ -18,6 +18,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ssooidc"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	swaconfig "github.com/blontic/swa/internal/config"
+	"github.com/spf13/viper"
 )
 
 type CredentialsManager struct {
@@ -139,34 +140,23 @@ func (c *CredentialsManager) GetCachedToken() (*string, error) {
 	}
 
 	cacheDir := filepath.Join(homeDir, ".aws", "sso", "cache")
-	files, err := ioutil.ReadDir(cacheDir)
-	if err != nil {
-		return nil, fmt.Errorf("no SSO cache found, please run 'swa login'")
+
+	// Get the start URL to find the correct cache file
+	startURL := viper.GetString("sso.start_url")
+	if startURL == "" {
+		return nil, fmt.Errorf("no SSO start URL configured")
 	}
 
-	// Find the most recent cache file
-	var latestFile string
-	var latestTime time.Time
+	// Create cache filename based on start URL (same logic as saveTokenToCache)
+	h := sha1.New()
+	h.Write([]byte(startURL))
+	filename := fmt.Sprintf("%x.json", h.Sum(nil))
+	cacheFile := filepath.Join(cacheDir, filename)
 
-	for _, file := range files {
-		if file.IsDir() {
-			continue
-		}
-
-		if file.ModTime().After(latestTime) {
-			latestTime = file.ModTime()
-			latestFile = file.Name()
-		}
-	}
-
-	if latestFile == "" {
-		return nil, fmt.Errorf("no valid SSO cache files found")
-	}
-
-	cacheFile := filepath.Join(cacheDir, latestFile)
+	// Check if the specific cache file exists
 	data, err := ioutil.ReadFile(cacheFile)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("no SSO cache found for this start URL, please run 'swa login'")
 	}
 
 	var cache SSOCache
@@ -174,11 +164,7 @@ func (c *CredentialsManager) GetCachedToken() (*string, error) {
 		return nil, err
 	}
 
-	// Check if token is expired
-	if time.Now().After(cache.ExpiresAt) {
-		return nil, fmt.Errorf("SSO token expired, please run 'swa login'")
-	}
-
+	// Return token without checking expiration - let API calls fail naturally
 	return &cache.AccessToken, nil
 }
 

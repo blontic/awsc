@@ -17,6 +17,8 @@
 - `architecture.md` - Core design principles and patterns
 - `coding-standards.md` - Go coding conventions and practices  
 - `implementation-preferences.md` - AWS SDK usage and dependencies
+- `constructor-patterns.md` - Mandatory constructor patterns for managers
+- `pagination-patterns.md` - Mandatory pagination patterns for AWS APIs
 - `development-workflow.md` - This file - process and workflow rules
 
 ## Rule Updates Required When:

@@ -46,6 +46,15 @@
 - Include all required service clients in manager (e.g., RDSManager has rdsClient, ec2Client, ssmClient)
 - Use manager methods for complex workflows (e.g., FindBastionHosts, StartPortForwarding)
 
+## Constructor Pattern
+- **ALWAYS use optional parameter pattern** for manager constructors
+- **NEVER create separate test-only constructors** (e.g., NewManagerWithClients)
+- Create `ManagerOptions` struct with all injectable dependencies
+- Use variadic parameters: `func NewManager(ctx context.Context, opts ...ManagerOptions)`
+- Production usage: `NewManager(ctx)` - loads real AWS clients
+- Test usage: `NewManager(ctx, ManagerOptions{Client: mockClient, Region: "us-east-1"})`
+- Keep test-only code out of production files
+
 ## Configuration Loading
 - See `implementation-preferences.md` for detailed config loading patterns
 
