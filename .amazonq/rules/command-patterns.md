@@ -43,10 +43,12 @@ if resourceName != "" {
 ## Current Command Compliance
 
 ### ✅ Compliant Commands
+- `logs tail` - Supports `--group` flag with fallback
 - `secrets show` - Supports `--name` flag with fallback
 - `rds connect` - Supports `--name` flag with fallback  
-- `ec2 connect` - Supports instance ID parameter with fallback
-- `login` - Supports `--force` flag (different pattern but consistent)
+- `ec2 connect` - Supports `--instance-id` parameter with fallback
+- `ec2 rdp` - Supports `--instance-id` parameter with fallback
+- `login` - Supports `--account` and `--role` flags with fallback
 
 ### 🔄 Commands to Update
 - Any new commands must follow this pattern

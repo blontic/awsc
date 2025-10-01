@@ -15,12 +15,13 @@
 - **Clean Interface**: All methods take access token as parameter
 - **Config Loading**: Uses `config.LoadAWSConfig()` for region configuration
 
-## Service Managers (RDS, EC2, Secrets)
+## Service Managers (RDS, EC2, Secrets, Logs)
 - **AWS Operations**: Service-specific operations using AWS SDK
 - **Credential Loading**: Use `LoadSWAConfigWithProfile()` to load swa profile
 - **Error Handling**: Detect auth errors and guide user to run `swa login`
-- **Business Logic**: Complex workflows like bastion discovery, port forwarding
-- **Config Loading**: Uses `LoadSWAConfig()` for authenticated operations
+- **Client Reload**: MANDATORY reloadClient() method to refresh AWS clients after re-authentication
+- **Business Logic**: Complex workflows like bastion discovery, port forwarding, log tailing
+- **Config Loading**: Uses `LoadSWAConfigWithProfile()` for authenticated operations
 
 ## Config Package (`internal/config/setup.go`)
 - **Shared Utilities**: `LoadAWSConfig()` for region override logic

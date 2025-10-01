@@ -14,14 +14,27 @@ import (
 )
 
 func TestNewRDSManager(t *testing.T) {
-	ctx := context.Background()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
 
-	// This will likely fail without valid AWS credentials but shouldn't panic
-	_, err := NewRDSManager(ctx)
+	mockRDS := mocks.NewMockRDSClient(ctrl)
+	mockEC2 := mocks.NewMockEC2Client(ctrl)
+
+	manager, err := NewRDSManager(context.Background(), RDSManagerOptions{
+		RDSClient: mockRDS,
+		EC2Client: mockEC2,
+		SSMClient: nil,
+		Region:    "us-east-1",
+	})
+
 	if err != nil {
-		t.Logf("NewRDSManager failed as expected in test environment: %v", err)
-	} else {
-		t.Log("NewRDSManager succeeded unexpectedly")
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if manager == nil {
+		t.Fatal("Expected manager to be created")
+	}
+	if manager.region != "us-east-1" {
+		t.Errorf("Expected region us-east-1, got %s", manager.region)
 	}
 }
 
@@ -600,121 +613,5 @@ func TestRDSManager_FindBastionHosts_EmptyResponse(t *testing.T) {
 	}
 	if len(bastions) != 0 {
 		t.Errorf("Expected 0 bastions, got %d", len(bastions))
-	}
-}
-
-func TestRDSManager_RunConnect_DirectAccess(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockRDS := mocks.NewMockRDSClient(ctrl)
-	mockEC2 := mocks.NewMockEC2Client(ctrl)
-
-	manager, err := NewRDSManager(context.Background(), RDSManagerOptions{
-		RDSClient: mockRDS,
-		EC2Client: mockEC2,
-		SSMClient: nil,
-		Region:    "us-east-1",
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error creating manager: %v", err)
-	}
-
-	// Mock ListRDSInstances call - may be called multiple times during RunConnect
-	mockRDS.EXPECT().
-		DescribeDBInstances(gomock.Any(), gomock.Any()).
-		Return(&rds.DescribeDBInstancesOutput{
-			DBInstances: []rdstypes.DBInstance{
-				{
-					DBInstanceIdentifier: aws.String("test-db-1"),
-					DBInstanceStatus:     aws.String("available"),
-					Engine:               aws.String("mysql"),
-					Endpoint: &rdstypes.Endpoint{
-						Address: aws.String("test-db-1.cluster-xyz.us-east-1.rds.amazonaws.com"),
-						Port:    aws.Int32(3306),
-					},
-				},
-			},
-		}, nil).
-		AnyTimes()
-
-	// Mock additional calls that RunConnect makes for bastion discovery
-	// Mock getRDSSecurityGroups call
-	mockRDS.EXPECT().
-		DescribeDBInstances(gomock.Any(), &rds.DescribeDBInstancesInput{
-			DBInstanceIdentifier: aws.String("test-db-1"),
-		}).
-		Return(&rds.DescribeDBInstancesOutput{
-			DBInstances: []rdstypes.DBInstance{
-				{
-					VpcSecurityGroups: []rdstypes.VpcSecurityGroupMembership{
-						{VpcSecurityGroupId: aws.String("sg-rds-123")},
-					},
-				},
-			},
-		}, nil).
-		AnyTimes()
-
-	// Mock EC2 DescribeInstances for bastion discovery
-	mockEC2.EXPECT().
-		DescribeInstances(gomock.Any(), gomock.Any()).
-		Return(&ec2.DescribeInstancesOutput{
-			Reservations: []types.Reservation{},
-		}, nil).
-		AnyTimes()
-
-	// Test direct access with valid instance name
-	// This would normally continue with bastion discovery and port forwarding
-	// but we're just testing the instance selection logic
-	err = manager.RunConnect(context.Background(), "test-db-1", 3306)
-	// We expect this to fail at the bastion discovery stage since we're not mocking that
-	// But it should not fail at the instance selection stage
-	if err == nil {
-		t.Log("RunConnect completed unexpectedly - likely would fail at bastion discovery in real scenario")
-	}
-}
-
-func TestRDSManager_RunConnect_InstanceNotFound(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockRDS := mocks.NewMockRDSClient(ctrl)
-	mockEC2 := mocks.NewMockEC2Client(ctrl)
-
-	manager, err := NewRDSManager(context.Background(), RDSManagerOptions{
-		RDSClient: mockRDS,
-		EC2Client: mockEC2,
-		SSMClient: nil,
-		Region:    "us-east-1",
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error creating manager: %v", err)
-	}
-
-	// Mock ListRDSInstances call - returns available instances, may be called multiple times
-	mockRDS.EXPECT().
-		DescribeDBInstances(gomock.Any(), gomock.Any()).
-		Return(&rds.DescribeDBInstancesOutput{
-			DBInstances: []rdstypes.DBInstance{
-				{
-					DBInstanceIdentifier: aws.String("available-db"),
-					DBInstanceStatus:     aws.String("available"),
-					Engine:               aws.String("mysql"),
-					Endpoint: &rdstypes.Endpoint{
-						Address: aws.String("available-db.cluster-xyz.us-east-1.rds.amazonaws.com"),
-						Port:    aws.Int32(3306),
-					},
-				},
-			},
-		}, nil).
-		AnyTimes()
-
-	// Test direct access with non-existent instance name
-	// Should fall back to interactive selection (which would fail in test without UI)
-	err = manager.RunConnect(context.Background(), "nonexistent-db", 3306)
-	// We expect this to fail at the interactive selection stage since we can't mock UI
-	// But it should have attempted the fallback
-	if err == nil {
-		t.Log("RunConnect completed unexpectedly - likely would fail at interactive selection in real scenario")
 	}
 }

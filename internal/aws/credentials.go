@@ -1,6 +1,7 @@
 package aws
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha1"
 	"encoding/json"
@@ -308,6 +309,35 @@ func CheckCredentialsValid(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// PromptForReauth asks the user if they want to re-authenticate and runs login if yes
+func PromptForReauth(ctx context.Context) (bool, error) {
+	fmt.Fprintf(os.Stderr, "Credentials expired. Re-authenticate? (y/n): ")
+
+	reader := bufio.NewReader(os.Stdin)
+	response, err := reader.ReadString('\n')
+	if err != nil {
+		return false, err
+	}
+
+	response = strings.ToLower(strings.TrimSpace(response))
+	if response != "y" && response != "yes" {
+		return false, nil
+	}
+
+	// Run login automatically
+	ssoManager, err := NewSSOManager(ctx)
+	if err != nil {
+		return false, fmt.Errorf("failed to create SSO manager: %w", err)
+	}
+
+	if err := ssoManager.RunLogin(ctx, false, "", ""); err != nil {
+		return false, fmt.Errorf("re-authentication failed: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "Re-authentication successful. Retrying operation...\n")
+	return true, nil
 }
 
 // HandleExpiredCredentials prompts user to re-authenticate when credentials expire

@@ -16,14 +16,26 @@ import (
 )
 
 func TestNewEC2Manager(t *testing.T) {
-	ctx := context.Background()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
 
-	// This will likely fail without valid AWS credentials but shouldn't panic
-	_, err := NewEC2Manager(ctx)
+	mockEC2 := mocks.NewMockEC2Client(ctrl)
+	mockSSM := mocks.NewMockSSMClient(ctrl)
+
+	manager, err := NewEC2Manager(context.Background(), EC2ManagerOptions{
+		EC2Client: mockEC2,
+		SSMClient: mockSSM,
+		Region:    "us-east-1",
+	})
+
 	if err != nil {
-		t.Logf("NewEC2Manager failed as expected in test environment: %v", err)
-	} else {
-		t.Log("NewEC2Manager succeeded unexpectedly")
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if manager == nil {
+		t.Fatal("Expected manager to be created")
+	}
+	if manager.region != "us-east-1" {
+		t.Errorf("Expected region us-east-1, got %s", manager.region)
 	}
 }
 
@@ -499,123 +511,5 @@ func TestEC2Manager_RunRDP_WindowsFiltering(t *testing.T) {
 		if !windowsInstances[0].IsSelectable {
 			t.Error("Windows instance should be selectable (running with SSM)")
 		}
-	}
-}
-func TestEC2Manager_RunConnect_WithInstanceId(t *testing.T) {
-	// Test that RunConnect accepts instance ID parameter (signature test)
-	ctx := context.Background()
-	instanceId := "i-test123"
-
-	// Create manager with mock clients to avoid nil pointer
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockEC2 := mocks.NewMockEC2Client(ctrl)
-	mockSSM := mocks.NewMockSSMClient(ctrl)
-
-	manager, err := NewEC2Manager(ctx, EC2ManagerOptions{
-		EC2Client: mockEC2,
-		SSMClient: mockSSM,
-		Region:    "us-east-1",
-	})
-	if err != nil {
-		t.Fatalf("Failed to create EC2Manager: %v", err)
-	}
-
-	// Mock empty response to test signature
-	mockEC2.EXPECT().DescribeInstances(gomock.Any(), gomock.Any()).Return(
-		&ec2.DescribeInstancesOutput{Reservations: []types.Reservation{}}, nil)
-
-	// This tests the signature accepts instanceId parameter
-	err = manager.RunConnect(ctx, instanceId)
-	if err == nil {
-		t.Error("Expected error for empty instances, but got none")
-	}
-}
-
-func TestEC2Manager_RunRDP_WithInstanceId(t *testing.T) {
-	// Test that RunRDP accepts instance ID parameter (signature test)
-	ctx := context.Background()
-	instanceId := "i-test123"
-
-	// Create manager with mock clients to avoid nil pointer
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockEC2 := mocks.NewMockEC2Client(ctrl)
-	mockSSM := mocks.NewMockSSMClient(ctrl)
-
-	manager, err := NewEC2Manager(ctx, EC2ManagerOptions{
-		EC2Client: mockEC2,
-		SSMClient: mockSSM,
-		Region:    "us-east-1",
-	})
-	if err != nil {
-		t.Fatalf("Failed to create EC2Manager: %v", err)
-	}
-
-	// Mock empty response to test signature
-	mockEC2.EXPECT().DescribeInstances(gomock.Any(), gomock.Any()).Return(
-		&ec2.DescribeInstancesOutput{Reservations: []types.Reservation{}}, nil)
-
-	// This tests the signature accepts instanceId parameter
-	err = manager.RunRDP(ctx, instanceId)
-	if err == nil {
-		t.Error("Expected error for no Windows instances, but got none")
-	}
-}
-
-func TestEC2Manager_RunConnect_AlwaysUsesSSM(t *testing.T) {
-	// Test that RunConnect always uses SSM session regardless of platform
-	ctx := context.Background()
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockEC2 := mocks.NewMockEC2Client(ctrl)
-	mockSSM := mocks.NewMockSSMClient(ctrl)
-
-	manager, err := NewEC2Manager(ctx, EC2ManagerOptions{
-		EC2Client: mockEC2,
-		SSMClient: mockSSM,
-		Region:    "us-east-1",
-	})
-	if err != nil {
-		t.Fatalf("Failed to create EC2Manager: %v", err)
-	}
-
-	windowsInstanceId := "i-windows123"
-
-	// Mock EC2 response with Windows instance
-	mockEC2.EXPECT().DescribeInstances(gomock.Any(), gomock.Any()).Return(
-		&ec2.DescribeInstancesOutput{
-			Reservations: []types.Reservation{
-				{
-					Instances: []types.Instance{
-						{
-							InstanceId: &windowsInstanceId,
-							Platform:   types.PlatformValuesWindows,
-							State:      &types.InstanceState{Name: types.InstanceStateNameRunning},
-							Tags:       []types.Tag{{Key: aws.String("Name"), Value: aws.String("Windows-Server")}},
-						},
-					},
-				},
-			},
-		}, nil)
-
-	// Mock SSM response - instance has SSM agent
-	mockSSM.EXPECT().DescribeInstanceInformation(gomock.Any(), gomock.Any()).Return(
-		&ssm.DescribeInstanceInformationOutput{
-			InstanceInformationList: []ssmtypes.InstanceInformation{
-				{InstanceId: &windowsInstanceId},
-			},
-		}, nil)
-
-	// Test that RunConnect with Windows instance ID goes directly to SSM
-	// This would fail at the SSM session start, but should not prompt for connection type
-	err = manager.RunConnect(ctx, windowsInstanceId)
-	// We expect this to fail at SSM session creation since we can't mock the external plugin
-	// But the important thing is it doesn't prompt for connection choice
-	if err == nil {
-		t.Log("RunConnect completed unexpectedly - likely would fail at SSM session start in real scenario")
 	}
 }

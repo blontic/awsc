@@ -45,6 +45,13 @@ All commands support both interactive selection and direct parameter access:
 ./swa secrets show            # List and select secrets interactively
 ./swa secrets show --name my-secret  # Show specific secret directly
 
+# CloudWatch Logs
+./swa logs tail               # List and select log group to tail interactively
+./swa logs tail --group /aws/lambda/my-function  # Tail specific log group directly
+./swa logs tail --group /aws/lambda/my-function --since 5m   # Show logs from last 5 minutes
+./swa logs tail --group /aws/lambda/my-function --follow     # Follow log output continuously
+./swa logs tail --group /aws/lambda/my-function --since 1h --follow  # Show last hour and follow
+
 # Configuration
 ./swa config init             # Initial setup
 ./swa config show             # Show current configuration
@@ -64,6 +71,7 @@ All resource commands follow a consistent pattern:
 ./swa --region us-west-2 secrets show --name my-secret
 ./swa --region eu-west-1 rds connect --name my-db
 ./swa --region ap-southeast-1 ec2 connect --instance-id i-1234567890abcdef0
+./swa --region us-west-2 logs tail --group /aws/lambda/my-function
 
 # Use alternate config file
 ./swa --config ~/.swa-dev/config.yaml login
@@ -82,6 +90,7 @@ All resource commands follow a consistent pattern:
 # Combine flags
 ./swa --verbose --region us-west-2 rds connect --name production-db
 ./swa --region ap-southeast-2 secrets show --name /prod/api-keys
+./swa --verbose --region us-east-1 logs tail --group /aws/ecs/my-service --since 30m
 ```
 
 ## Configuration
