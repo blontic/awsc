@@ -28,6 +28,7 @@
 - Modifying authentication or configuration flows
 - Adding new command structures or CLI patterns
 - Adding new global flags or configuration options
+- Creating commands that don't follow the mandatory direct-parameter-with-fallback pattern
 
 ## Documentation Updates Required When:
 - Adding new CLI commands or subcommands
@@ -36,6 +37,7 @@
 - Adding new external dependencies
 - Modifying configuration file structure
 - Adding new AWS service integrations
+- Implementing new commands (must document both interactive and direct usage patterns)
 
 ## Continuous Improvement
 - Rules should evolve with the codebase

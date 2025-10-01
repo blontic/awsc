@@ -44,6 +44,34 @@ func TestLoginCommandFlags(t *testing.T) {
 	if forceFlag.Usage == "" {
 		t.Error("Force flag should have usage description")
 	}
+
+	// Test that account flag is defined
+	accountFlag := loginCmd.Flags().Lookup("account")
+	if accountFlag == nil {
+		t.Error("--account flag should be defined for login command")
+	}
+
+	if accountFlag.DefValue != "" {
+		t.Errorf("Expected account flag default to be empty, got '%s'", accountFlag.DefValue)
+	}
+
+	if accountFlag.Usage == "" {
+		t.Error("Account flag should have usage description")
+	}
+
+	// Test that role flag is defined
+	roleFlag := loginCmd.Flags().Lookup("role")
+	if roleFlag == nil {
+		t.Error("--role flag should be defined for login command")
+	}
+
+	if roleFlag.DefValue != "" {
+		t.Errorf("Expected role flag default to be empty, got '%s'", roleFlag.DefValue)
+	}
+
+	if roleFlag.Usage == "" {
+		t.Error("Role flag should have usage description")
+	}
 }
 
 func TestRunLogin(t *testing.T) {

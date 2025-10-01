@@ -58,3 +58,29 @@ func TestRunRDSConnect(t *testing.T) {
 	// Business logic is tested in internal/aws package
 	// This only tests CLI interface
 }
+
+func TestRDSConnectFlags(t *testing.T) {
+	// Test that required flags are present
+	localPortFlag := rdsConnectCmd.Flags().Lookup("local-port")
+	if localPortFlag == nil {
+		t.Error("rdsConnectCmd should have --local-port flag")
+	}
+
+	nameFlag := rdsConnectCmd.Flags().Lookup("name")
+	if nameFlag == nil {
+		t.Error("rdsConnectCmd should have --name flag")
+	}
+
+	// Test flag properties
+	if nameFlag != nil {
+		if nameFlag.Usage == "" {
+			t.Error("--name flag should have usage description")
+		}
+	}
+
+	if localPortFlag != nil {
+		if localPortFlag.Usage == "" {
+			t.Error("--local-port flag should have usage description")
+		}
+	}
+}

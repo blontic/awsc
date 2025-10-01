@@ -22,11 +22,13 @@ var rdsConnectCmd = &cobra.Command{
 }
 
 var localPort int
+var rdsInstanceName string
 
 func init() {
 	rootCmd.AddCommand(rdsCmd)
 	rdsCmd.AddCommand(rdsConnectCmd)
 	rdsConnectCmd.Flags().IntVar(&localPort, "local-port", 0, "Local port for port forwarding (defaults to RDS port)")
+	rdsConnectCmd.Flags().StringVar(&rdsInstanceName, "name", "", "Name of the RDS instance to connect to directly")
 }
 
 func runRDSConnect(cmd *cobra.Command, args []string) {
@@ -40,7 +42,7 @@ func runRDSConnect(cmd *cobra.Command, args []string) {
 	}
 
 	// Run the RDS connect workflow
-	if err := rdsManager.RunConnect(ctx, int32(localPort)); err != nil {
+	if err := rdsManager.RunConnect(ctx, rdsInstanceName, int32(localPort)); err != nil {
 		fmt.Printf("Error: %v\n", err)
 	}
 }

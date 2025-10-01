@@ -38,6 +38,13 @@
 - Graceful degradation when TTY not available
 - Handle Ctrl+C gracefully
 
+## Command Design Pattern
+- **MANDATORY**: All commands must support direct parameter access with fallback to interactive selection
+- **Pattern**: `./swa [service] [action]` (interactive) and `./swa [service] [action] --name [resource]` (direct)
+- **Error Handling**: When direct access fails, show error and fall back to interactive list
+- **Consistency**: Use "Selected: [resource]" format after all selections
+- See `command-patterns.md` for detailed implementation requirements
+
 ## Manager Pattern
 - Create manager structs for AWS services (SSO, RDS, Secrets, etc.) in `internal/aws/`
 - Initialize with context and AWS config using `LoadAWSConfig()` or `LoadSWAConfig()`
