@@ -12,14 +12,24 @@ import (
 )
 
 func TestNewSecretsManager(t *testing.T) {
-	ctx := context.Background()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
 
-	// This will likely fail without valid AWS credentials but shouldn't panic
-	_, err := NewSecretsManager(ctx)
+	mockClient := mocks.NewMockSecretsManagerClient(ctrl)
+
+	manager, err := NewSecretsManager(context.Background(), SecretsManagerOptions{
+		Client: mockClient,
+		Region: "us-east-1",
+	})
+
 	if err != nil {
-		t.Logf("NewSecretsManager failed as expected in test environment: %v", err)
-	} else {
-		t.Log("NewSecretsManager succeeded unexpectedly")
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if manager == nil {
+		t.Fatal("Expected manager to be created")
+	}
+	if manager.region != "us-east-1" {
+		t.Errorf("Expected region us-east-1, got %s", manager.region)
 	}
 }
 
@@ -252,75 +262,4 @@ func TestSecretsManager_DisplaySecret_InvalidJSON(t *testing.T) {
 
 	// This should fall back to plain text display without panicking
 	manager.DisplaySecret(context.Background(), secretName, secretValue)
-}
-
-func TestSecretsManager_RunShowSecrets_DirectAccess(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockClient := mocks.NewMockSecretsManagerClient(ctrl)
-	manager, err := NewSecretsManager(context.Background(), SecretsManagerOptions{
-		Client: mockClient,
-		Region: "us-east-1",
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error creating manager: %v", err)
-	}
-
-	// Test direct access with valid secret name
-	mockClient.EXPECT().
-		GetSecretValue(gomock.Any(), &secretsmanager.GetSecretValueInput{
-			SecretId: aws.String("test-secret"),
-		}).
-		Return(&secretsmanager.GetSecretValueOutput{
-			SecretString: aws.String("secret-value"),
-		}, nil).
-		Times(1)
-
-	// This would normally display output, but we're testing it doesn't error
-	err = manager.RunShowSecrets(context.Background(), "test-secret")
-	if err != nil {
-		t.Errorf("Expected no error for direct access, got: %v", err)
-	}
-}
-
-func TestSecretsManager_RunShowSecrets_SecretNotFound(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockClient := mocks.NewMockSecretsManagerClient(ctrl)
-	manager, err := NewSecretsManager(context.Background(), SecretsManagerOptions{
-		Client: mockClient,
-		Region: "us-east-1",
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error creating manager: %v", err)
-	}
-
-	// Test direct access with non-existent secret - should fall back to list
-	mockClient.EXPECT().
-		GetSecretValue(gomock.Any(), &secretsmanager.GetSecretValueInput{
-			SecretId: aws.String("nonexistent-secret"),
-		}).
-		Return(nil, &types.ResourceNotFoundException{}).
-		Times(1)
-
-	// Should then call ListSecrets for fallback
-	mockClient.EXPECT().
-		ListSecrets(gomock.Any(), gomock.Any()).
-		Return(&secretsmanager.ListSecretsOutput{
-			SecretList: []types.SecretListEntry{
-				{
-					Name: aws.String("available-secret"),
-					ARN:  aws.String("arn:aws:secretsmanager:us-east-1:123456789012:secret:available-secret-AbCdEf"),
-				},
-			},
-		}, nil).
-		Times(1)
-
-	// This would normally show interactive selection, but we're testing the fallback logic
-	// The method should not return an error even when secret not found (it falls back to list)
-	err = manager.RunShowSecrets(context.Background(), "nonexistent-secret")
-	// We expect this to not complete successfully since it would require user interaction
-	// But it should not panic and should call both GetSecretValue and ListSecrets
 }

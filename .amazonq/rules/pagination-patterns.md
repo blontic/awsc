@@ -70,6 +70,10 @@ for {
 ### SSM Services
 - `DescribeInstanceInformation` - Uses NextToken (if needed)
 
+### CloudWatch Logs
+- `DescribeLogGroups` - Uses NextToken
+- `FilterLogEvents` - Uses NextToken
+
 ## Why Pagination is Critical
 - **AWS limits page size** - Default is often 20-100 items per page
 - **Large environments** - Organizations can have hundreds of accounts, instances, secrets

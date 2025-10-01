@@ -23,6 +23,10 @@
 - All AWS service managers use LoadSWAConfigWithProfile() to load swa profile
 - Detect authentication errors with IsAuthError() function
 - Clean separation: authentication vs listing vs credential management
+- **MANDATORY**: All AWS operations must handle auth errors with automatic re-authentication prompt
+- **MANDATORY**: Long-running operations (polling, streaming) must check auth errors on each iteration
+- **MANDATORY**: All managers must reload AWS clients after successful re-authentication
+- **Auto-reauth flow**: "Credentials expired. Re-authenticate? (y/n)" → Run login automatically → Reload clients → Retry operation
 
 ## Output Design
 - **stderr**: Interactive messages, status updates, success notifications
@@ -47,7 +51,7 @@
 
 ## Manager Pattern
 - Create manager structs for AWS services (SSO, RDS, Secrets, etc.) in `internal/aws/`
-- Initialize with context and AWS config using `LoadAWSConfig()` or `LoadSWAConfig()`
+- Initialize with context and AWS config using `LoadSWAConfigWithProfile()`
 - Store clients and region in manager struct
 - Provide high-level methods for operations
 - Include all required service clients in manager (e.g., RDSManager has rdsClient, ec2Client, ssmClient)
@@ -84,6 +88,7 @@
 - **Secrets Manager**: Secret listing, retrieval, and display with JSON formatting
 - **EC2**: Instance discovery for bastion hosts, security group analysis
 - **SSM**: Session creation for port forwarding via external plugin
+- **CloudWatch Logs**: Log group listing, log tailing with follow mode
 
 ## Security Requirements
 - See `coding-standards.md` for detailed security standards

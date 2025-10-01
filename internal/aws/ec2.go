@@ -203,18 +203,19 @@ func (e *EC2Manager) ListAllInstances(ctx context.Context) ([]EC2Instance, error
 		})
 		if err != nil {
 			if IsAuthError(err) {
-				if handleErr := HandleExpiredCredentials(ctx); handleErr != nil {
-					return nil, handleErr
-				}
-				// Reload all clients with fresh credentials
-				if reloadErr := e.reloadClients(ctx); reloadErr != nil {
-					return nil, reloadErr
-				}
-				// Retry after re-authentication
-				result, err = e.ec2Client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
-					NextToken: nextToken,
-				})
-				if err != nil {
+				if shouldReauth, reAuthErr := PromptForReauth(ctx); shouldReauth && reAuthErr == nil {
+					// Reload all clients with fresh credentials
+					if reloadErr := e.reloadClients(ctx); reloadErr != nil {
+						return nil, reloadErr
+					}
+					// Retry after re-authentication
+					result, err = e.ec2Client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+						NextToken: nextToken,
+					})
+					if err != nil {
+						return nil, err
+					}
+				} else {
 					return nil, err
 				}
 			} else {
@@ -287,23 +288,24 @@ func (e *EC2Manager) hasSSMAgent(ctx context.Context, instanceId string) bool {
 	})
 	if err != nil {
 		if IsAuthError(err) {
-			if handleErr := HandleExpiredCredentials(ctx); handleErr != nil {
-				return false
-			}
-			// Reload all clients with fresh credentials
-			if reloadErr := e.reloadClients(ctx); reloadErr != nil {
-				return false
-			}
-			// Retry after re-authentication
-			result, err = e.ssmClient.DescribeInstanceInformation(ctx, &ssm.DescribeInstanceInformationInput{
-				Filters: []ssmtypes.InstanceInformationStringFilter{
-					{
-						Key:    aws.String("InstanceIds"),
-						Values: []string{instanceId},
+			if shouldReauth, reAuthErr := PromptForReauth(ctx); shouldReauth && reAuthErr == nil {
+				// Reload all clients with fresh credentials
+				if reloadErr := e.reloadClients(ctx); reloadErr != nil {
+					return false
+				}
+				// Retry after re-authentication
+				result, err = e.ssmClient.DescribeInstanceInformation(ctx, &ssm.DescribeInstanceInformationInput{
+					Filters: []ssmtypes.InstanceInformationStringFilter{
+						{
+							Key:    aws.String("InstanceIds"),
+							Values: []string{instanceId},
+						},
 					},
-				},
-			})
-			if err != nil {
+				})
+				if err != nil {
+					return false
+				}
+			} else {
 				return false
 			}
 		} else {

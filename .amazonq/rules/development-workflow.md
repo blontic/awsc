@@ -30,6 +30,12 @@
 - Adding new global flags or configuration options
 - Creating commands that don't follow the mandatory direct-parameter-with-fallback pattern
 
+## New Command Implementation Process
+1. **Review checklist**: Use `new-command-checklist.md` before starting
+2. **Follow patterns**: Reference existing commands (logs, secrets, rds, ec2)
+3. **Verify compliance**: Ensure all mandatory requirements are met
+4. **Update rules**: Add new patterns or requirements discovered during implementation
+
 ## Documentation Updates Required When:
 - Adding new CLI commands or subcommands
 - Adding new global flags (`--region`, `--config`, etc.)

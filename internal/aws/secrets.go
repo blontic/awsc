@@ -65,18 +65,19 @@ func (s *SecretsManager) ListSecrets(ctx context.Context) ([]Secret, error) {
 		})
 		if err != nil {
 			if IsAuthError(err) {
-				if handleErr := HandleExpiredCredentials(ctx); handleErr != nil {
-					return nil, handleErr
-				}
-				// Reload client with fresh credentials
-				if reloadErr := s.reloadClient(ctx); reloadErr != nil {
-					return nil, reloadErr
-				}
-				// Retry after re-authentication
-				result, err = s.client.ListSecrets(ctx, &secretsmanager.ListSecretsInput{
-					NextToken: nextToken,
-				})
-				if err != nil {
+				if shouldReauth, reAuthErr := PromptForReauth(ctx); shouldReauth && reAuthErr == nil {
+					// Reload client with fresh credentials
+					if reloadErr := s.reloadClient(ctx); reloadErr != nil {
+						return nil, reloadErr
+					}
+					// Retry after re-authentication
+					result, err = s.client.ListSecrets(ctx, &secretsmanager.ListSecretsInput{
+						NextToken: nextToken,
+					})
+					if err != nil {
+						return nil, err
+					}
+				} else {
 					return nil, err
 				}
 			} else {
@@ -116,18 +117,19 @@ func (s *SecretsManager) GetSecretValue(ctx context.Context, secretName string) 
 	})
 	if err != nil {
 		if IsAuthError(err) {
-			if handleErr := HandleExpiredCredentials(ctx); handleErr != nil {
-				return "", handleErr
-			}
-			// Reload client with fresh credentials
-			if reloadErr := s.reloadClient(ctx); reloadErr != nil {
-				return "", reloadErr
-			}
-			// Retry after re-authentication
-			result, err = s.client.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{
-				SecretId: aws.String(secretName),
-			})
-			if err != nil {
+			if shouldReauth, reAuthErr := PromptForReauth(ctx); shouldReauth && reAuthErr == nil {
+				// Reload client with fresh credentials
+				if reloadErr := s.reloadClient(ctx); reloadErr != nil {
+					return "", reloadErr
+				}
+				// Retry after re-authentication
+				result, err = s.client.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{
+					SecretId: aws.String(secretName),
+				})
+				if err != nil {
+					return "", err
+				}
+			} else {
 				return "", err
 			}
 		} else {

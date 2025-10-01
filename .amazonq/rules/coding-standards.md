@@ -44,9 +44,29 @@
 ## Credential Handling Pattern
 - **NEVER use CheckAWSSession()** - it's too restrictive
 - **Try AWS operations directly** - let SDK handle credential loading
-- **Handle credential errors gracefully** - show helpful SSO login message
+- **Handle credential errors gracefully** - offer automatic re-authentication
 - **Respect existing profiles** - work with user's current AWS setup
-- **Pattern**: Create manager → Try operation → Handle auth errors → Guide user
+- **Pattern**: Create manager → Try operation → Handle auth errors → Auto-reauth → Retry
+- **MANDATORY Auth Error Pattern**:
+  ```go
+  if err != nil {
+      if IsAuthError(err) {
+          if shouldReauth, reAuthErr := PromptForReauth(); shouldReauth && reAuthErr == nil {
+              // MANDATORY: Reload client with fresh credentials after re-auth
+              if reloadErr := m.reloadClient(ctx); reloadErr != nil {
+                  return reloadErr
+              }
+              // Retry the operation after successful re-auth and client reload
+              return retryOperation()
+          }
+          return err
+      }
+      return err
+  }
+  ```
+- **MANDATORY Client Reload**: All managers must reload AWS clients after successful re-authentication to use fresh credentials
+- **Long-running operations**: Must check auth errors in loops/polling (follow mode, streaming, etc.) and reload clients after re-auth
+- **Auto-reauth flow**: Ask "Credentials expired. Re-authenticate? (y/n)" → Run login automatically → Reload client → Retry operation
 
 ## SSO Login Behavior
 - **`swa login`**: Always show account/role selection if SSO token exists (even if AWS creds valid)
@@ -79,6 +99,12 @@
 - Verify both compilation and tests succeed before considering changes complete
 - Fix compilation errors and test failures immediately
 - Never require user approval for compilation or testing - both should be automatic
+
+## Empty Resource Handling
+- **MANDATORY**: All list operations must handle empty results with helpful messages
+- **Pattern**: "No [resources] found" when lists are empty
+- **Examples**: "No log groups found", "No secrets found", "No instances found"
+- Apply to both interactive selection and direct parameter access
 
 ## Testing Requirements
 - Write tests for all new functionality where possible

@@ -5,7 +5,7 @@
 - Use `github.com/aws/aws-sdk-go-v2/service/*` packages
 - **Config loading patterns**:
   - `config.LoadAWSConfig(ctx)`: For SSO operations (region override only)
-  - `LoadSWAConfig(ctx)`: For service operations (swa profile + region override)
+  - `config.LoadSWAConfigWithProfile(ctx)`: For service operations (swa profile + region override)
 - Create service clients from config: `service.NewFromConfig(cfg)`
 - Pass context to all AWS API calls
 - **ALWAYS handle pagination**: All AWS list/describe operations must handle NextToken/Marker pagination
@@ -14,6 +14,7 @@
 - For EC2 operations: Use DescribeInstances, DescribeSecurityGroups for bastion discovery (with NextToken pagination)
 - For SSO operations: Use ListAccounts, ListAccountRoles (with NextToken pagination)
 - For Secrets operations: Use ListSecrets (with NextToken pagination)
+- For CloudWatch Logs operations: Use DescribeLogGroups, FilterLogEvents (with NextToken pagination)
 
 ## SSM Operations
 - **External plugin approach**: Use official session-manager-plugin binary
@@ -42,6 +43,7 @@
   - `service/ec2` - Instance and security group discovery
   - `service/rds` - Database instance management
   - `service/ssm` - Session Manager session creation
+  - `service/cloudwatchlogs` - CloudWatch Logs operations
 - External binary dependency:
   - `session-manager-plugin` - Official AWS plugin for SSM protocol
 
@@ -59,6 +61,10 @@
 - **IsAuthError()**: Detect authentication/credential errors in AWS responses
 - **Clean separation**: Authentication logic in CredentialsManager, listing in SSOManager
 - **Profile isolation**: Keep swa credentials separate from user's existing AWS setup
+- **MANDATORY Client Reload**: All managers must implement reloadClient(s) method to refresh AWS clients after re-authentication
+- **Client Reload Pattern**: After successful PromptForReauth, ALWAYS call reloadClient before retrying operations
+- **Never Skip Client Reload**: Fresh credentials require fresh clients - old clients retain expired credentials
+- **Reload All Clients**: Managers with multiple clients (RDS has rdsClient, ec2Client, ssmClient) must reload ALL clients
 
 ## SSO Token Handling
 - **Never check token expiration**: Let AWS API calls fail naturally instead of predicting expiration
@@ -92,7 +98,7 @@
 - **Interactive Selection**: Consistent arrow-key navigation with ui.RunSelector
 - **Selection Confirmation**: Show "Selected: [item]" after user selections (consistent across all commands)
 - **Graceful Quit**: Handle 'q' key without showing exit status or error messages
-- **Credential Guidance**: When credentials missing/expired, show "Please run: swa login"
+- **Credential Guidance**: When credentials missing/expired, offer automatic re-authentication
 - **Clean Output**: No emojis in output headers, keep formatting minimal and professional
 - **Verbose Mode**: Use `--verbose` flag for detailed debugging, clean output by default
 - **Error Messages**: Clear, actionable error messages with helpful guidance
