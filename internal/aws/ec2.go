@@ -64,9 +64,44 @@ func NewEC2Manager(ctx context.Context, opts ...EC2ManagerOptions) (*EC2Manager,
 	}, nil
 }
 
-func (e *EC2Manager) RunConnect(ctx context.Context) error {
+func (e *EC2Manager) RunConnect(ctx context.Context, instanceId string) error {
 	// Display AWS context
 	DisplayAWSContext(ctx)
+
+	// Get all instances first
+	allInstances, err := e.ListAllInstances(ctx)
+	if err != nil {
+		return fmt.Errorf("error listing EC2 instances: %v", err)
+	}
+
+	if len(allInstances) == 0 {
+		return fmt.Errorf("no EC2 instances found")
+	}
+
+	// If instance ID provided, try to connect directly
+	if instanceId != "" {
+		var targetInstance *EC2Instance
+		for _, instance := range allInstances {
+			if instance.InstanceId == instanceId {
+				targetInstance = &instance
+				break
+			}
+		}
+
+		if targetInstance != nil && targetInstance.IsSelectable {
+			fmt.Printf("Connecting to instance: %s (%s)\n", targetInstance.Name, targetInstance.InstanceId)
+
+			// Start SSM session for all instances
+			return e.StartSSMSession(ctx, targetInstance.InstanceId)
+		}
+
+		// Instance not found or not selectable - show error and fall through to list
+		if targetInstance == nil {
+			fmt.Printf("Instance '%s' not found. Available instances:\n\n", instanceId)
+		} else {
+			fmt.Printf("Instance '%s' is not available (state: %s). Available instances:\n\n", instanceId, targetInstance.State)
+		}
+	}
 
 	// List all EC2 instances (show stopped ones as non-selectable)
 	instances, err := e.ListAllInstances(ctx)
@@ -97,20 +132,15 @@ func (e *EC2Manager) RunConnect(ctx context.Context) error {
 		return err
 	}
 
-	// Check if Windows instance and offer RDP option
-	if strings.ToLower(selectedInstance.Platform) == "windows" {
-		return e.handleWindowsConnection(ctx, *selectedInstance)
-	}
-
-	// Start SSM session for non-Windows instances
+	// Start SSM session for all instances
 	return e.StartSSMSession(ctx, selectedInstance.InstanceId)
 }
 
-func (e *EC2Manager) RunRDP(ctx context.Context) error {
+func (e *EC2Manager) RunRDP(ctx context.Context, instanceId string) error {
 	// Display AWS context
 	DisplayAWSContext(ctx)
 
-	// List all instances and filter for Windows ones
+	// Get all instances first
 	allInstances, err := e.ListAllInstances(ctx)
 	if err != nil {
 		return fmt.Errorf("error listing EC2 instances: %v", err)
@@ -128,6 +158,29 @@ func (e *EC2Manager) RunRDP(ctx context.Context) error {
 
 	if len(windowsInstances) == 0 {
 		return fmt.Errorf("no Windows EC2 instances found")
+	}
+
+	// If instance ID provided, try to connect directly
+	if instanceId != "" {
+		var targetInstance *EC2Instance
+		for _, instance := range windowsInstances {
+			if instance.InstanceId == instanceId {
+				targetInstance = &instance
+				break
+			}
+		}
+
+		if targetInstance != nil && targetInstance.IsSelectable {
+			fmt.Printf("Starting RDP to instance: %s (%s)\n", targetInstance.Name, targetInstance.InstanceId)
+			return e.startRDPPortForwarding(ctx, targetInstance.InstanceId)
+		}
+
+		// Instance not found or not selectable - show error and fall through to list
+		if targetInstance == nil {
+			fmt.Printf("Windows instance '%s' not found. Available Windows instances:\n\n", instanceId)
+		} else {
+			fmt.Printf("Windows instance '%s' is not available for RDP (state: %s). Available Windows instances:\n\n", instanceId, targetInstance.State)
+		}
 	}
 
 	// Select Windows instance
@@ -297,23 +350,6 @@ func (e *EC2Manager) getPlatform(instance types.Instance) string {
 
 	// Default to Linux if no platform specified
 	return "Linux"
-}
-
-func (e *EC2Manager) handleWindowsConnection(ctx context.Context, instance EC2Instance) error {
-	fmt.Printf("\nWindows instance detected. Choose connection method:\n")
-	fmt.Printf("1. SSM Session (PowerShell)\n")
-	fmt.Printf("2. RDP Port Forwarding\n")
-	fmt.Printf("\nEnter choice (1 or 2): ")
-
-	var choice string
-	fmt.Scanln(&choice)
-
-	switch choice {
-	case "2":
-		return e.startRDPPortForwarding(ctx, instance.InstanceId)
-	default:
-		return e.StartSSMSession(ctx, instance.InstanceId)
-	}
 }
 
 func (e *EC2Manager) startRDPPortForwarding(ctx context.Context, instanceId string) error {

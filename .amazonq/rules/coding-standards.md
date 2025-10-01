@@ -56,8 +56,11 @@
 
 ## CLI Consistency
 - **Global flags**: `--region` and `--config` available on all commands
+- **Command pattern**: ALL commands must support direct parameter access with interactive fallback
+- **Parameter naming**: Use `--name` for primary resource identifier, `--id` for alternatives
 - **Selection pattern**: All commands use "Selected: [item]" format after user selection
 - **Error format**: "Error [action]: [details]" for all error messages
+- **Fallback behavior**: When direct access fails, show error then interactive list
 - **Output format**: Clean, minimal, no emojis in headers
 - **Command descriptions**: Consistent short/long descriptions across all commands
 - **Exit behavior**: Commands return gracefully, avoid os.Exit(1) in favor of return

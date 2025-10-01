@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/sso"
 	"github.com/aws/aws-sdk-go-v2/service/sso/types"
@@ -98,7 +99,7 @@ func (s *SSOManager) GetRoleCredentials(ctx context.Context, accessToken, accoun
 }
 
 // RunLogin handles the complete SSO login workflow
-func (s *SSOManager) RunLogin(ctx context.Context, force bool) error {
+func (s *SSOManager) RunLogin(ctx context.Context, force bool, accountName, roleName string) error {
 	// Display current AWS context if available
 	if !force {
 		DisplayAWSContext(ctx)
@@ -123,7 +124,7 @@ func (s *SSOManager) RunLogin(ctx context.Context, force bool) error {
 			accounts, listErr := s.ListAccounts(ctx, *accessToken)
 			if listErr == nil && len(accounts) > 0 {
 				// SSO token works, proceed with account/role selection
-				return s.handleAccountRoleSelection(ctx, *accessToken, accounts)
+				return s.handleAccountRoleSelection(ctx, *accessToken, accounts, accountName, roleName)
 			}
 		}
 	}
@@ -155,31 +156,53 @@ func (s *SSOManager) RunLogin(ctx context.Context, force bool) error {
 		return fmt.Errorf("no accounts found")
 	}
 
-	return s.handleAccountRoleSelection(ctx, *accessToken, accounts)
+	return s.handleAccountRoleSelection(ctx, *accessToken, accounts, accountName, roleName)
 }
 
-func (s *SSOManager) handleAccountRoleSelection(ctx context.Context, accessToken string, accounts []types.AccountInfo) error {
+func (s *SSOManager) handleAccountRoleSelection(ctx context.Context, accessToken string, accounts []types.AccountInfo, accountName, roleName string) error {
 	// Sort accounts alphabetically
 	sort.Slice(accounts, func(i, j int) bool {
 		return *accounts[i].AccountName < *accounts[j].AccountName
 	})
 
-	// Create account options
-	accountOptions := make([]string, len(accounts))
-	for i, account := range accounts {
-		accountOptions[i] = fmt.Sprintf("%s (%s)", *account.AccountName, *account.AccountId)
+	var selectedAccount types.AccountInfo
+	var selectedAccountIndex int = -1
+
+	// If account name provided, try to find exact match
+	if accountName != "" {
+		for i, account := range accounts {
+			if strings.EqualFold(*account.AccountName, accountName) {
+				selectedAccount = account
+				selectedAccountIndex = i
+				break
+			}
+		}
+		if selectedAccountIndex == -1 {
+			fmt.Printf("Account '%s' not found. Available accounts:\n\n", accountName)
+			// Fall through to show account list
+		} else {
+			fmt.Printf("Found account: %s\n", *selectedAccount.AccountName)
+		}
 	}
 
-	// Interactive account selection
-	selectedAccountIndex, err := ui.RunSelector("Select AWS Account:", accountOptions)
-	if err != nil {
-		return fmt.Errorf("error selecting account: %v", err)
-	}
-	if selectedAccountIndex == -1 {
-		return fmt.Errorf("no account selected")
-	}
+	// Show account selection if no account specified or account not found
+	if accountName == "" || selectedAccountIndex == -1 {
+		// Create account options
+		accountOptions := make([]string, len(accounts))
+		for i, account := range accounts {
+			accountOptions[i] = fmt.Sprintf("%s (%s)", *account.AccountName, *account.AccountId)
+		}
 
-	selectedAccount := accounts[selectedAccountIndex]
+		// Interactive account selection
+		selectedAccountIndex, err := ui.RunSelector("Select AWS Account:", accountOptions)
+		if err != nil {
+			return fmt.Errorf("error selecting account: %v", err)
+		}
+		if selectedAccountIndex == -1 {
+			return fmt.Errorf("no account selected")
+		}
+		selectedAccount = accounts[selectedAccountIndex]
+	}
 	fmt.Printf("Selected: %s\n", *selectedAccount.AccountName)
 
 	// List roles
@@ -197,22 +220,44 @@ func (s *SSOManager) handleAccountRoleSelection(ctx context.Context, accessToken
 		return *roles[i].RoleName < *roles[j].RoleName
 	})
 
-	// Create role options
-	roleOptions := make([]string, len(roles))
-	for i, role := range roles {
-		roleOptions[i] = *role.RoleName
+	var selectedRole types.RoleInfo
+	var selectedRoleIndex int = -1
+
+	// If role name provided, try to find exact match
+	if roleName != "" {
+		for i, role := range roles {
+			if strings.EqualFold(*role.RoleName, roleName) {
+				selectedRole = role
+				selectedRoleIndex = i
+				break
+			}
+		}
+		if selectedRoleIndex == -1 {
+			fmt.Printf("Role '%s' not found in account %s. Available roles:\n\n", roleName, *selectedAccount.AccountName)
+			// Fall through to show role list
+		} else {
+			fmt.Printf("Found role: %s\n", *selectedRole.RoleName)
+		}
 	}
 
-	// Interactive role selection
-	selectedRoleIndex, err := ui.RunSelector(fmt.Sprintf("Select role for %s:", *selectedAccount.AccountName), roleOptions)
-	if err != nil {
-		return fmt.Errorf("error selecting role: %v", err)
-	}
-	if selectedRoleIndex == -1 {
-		return fmt.Errorf("no role selected")
-	}
+	// Show role selection if no role specified or role not found
+	if roleName == "" || selectedRoleIndex == -1 {
+		// Create role options
+		roleOptions := make([]string, len(roles))
+		for i, role := range roles {
+			roleOptions[i] = *role.RoleName
+		}
 
-	selectedRole := roles[selectedRoleIndex]
+		// Interactive role selection
+		selectedRoleIndex, err := ui.RunSelector(fmt.Sprintf("Select role for %s:", *selectedAccount.AccountName), roleOptions)
+		if err != nil {
+			return fmt.Errorf("error selecting role: %v", err)
+		}
+		if selectedRoleIndex == -1 {
+			return fmt.Errorf("no role selected")
+		}
+		selectedRole = roles[selectedRoleIndex]
+	}
 	fmt.Printf("Selected: %s\n", *selectedRole.RoleName)
 
 	// Get credentials (AWS SSO automatically uses max duration for the role)

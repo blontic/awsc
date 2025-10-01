@@ -9,6 +9,8 @@
 
 ## Documentation Requirements
 - **Command descriptions** - Each new command needs usage examples in README
+- **Dual usage patterns** - MUST document both interactive and direct parameter usage for every command
+- **Parameter examples** - Show `--name` and other parameter usage with real examples
 - **Configuration changes** - Document new config fields and their purpose
 - **Global flags** - Show how global options work with specific commands
 - **Prerequisites** - List all external dependencies (like session-manager-plugin)
@@ -34,8 +36,10 @@
 
 ## Documentation Standards
 - Use consistent command examples with `./swa` prefix
+- **MANDATORY**: Show both interactive and direct parameter usage for every command
 - Show both the command and what it does (numbered steps)
 - Include global flag examples for major commands
 - Keep language clear and concise
 - Use code blocks for all command examples
 - Document both success and error scenarios where relevant
+- Follow pattern: `./swa [service] [action]` then `./swa [service] [action] --name [resource]`

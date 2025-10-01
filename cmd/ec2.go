@@ -28,10 +28,16 @@ var ec2RdpCmd = &cobra.Command{
 	Run:   runEC2RDP,
 }
 
+var instanceId string
+
 func init() {
 	rootCmd.AddCommand(ec2Cmd)
 	ec2Cmd.AddCommand(ec2ConnectCmd)
 	ec2Cmd.AddCommand(ec2RdpCmd)
+
+	// Add instance-id flag to both commands
+	ec2ConnectCmd.Flags().StringVar(&instanceId, "instance-id", "", "EC2 instance ID to connect to (optional)")
+	ec2RdpCmd.Flags().StringVar(&instanceId, "instance-id", "", "EC2 instance ID to connect to (optional)")
 }
 
 func createEC2Manager() (*aws.EC2Manager, error) {
@@ -48,7 +54,10 @@ func runEC2Connect(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	if err := ec2Manager.RunConnect(ctx); err != nil {
+	// Get instance-id flag value
+	instanceIdFlag, _ := cmd.Flags().GetString("instance-id")
+
+	if err := ec2Manager.RunConnect(ctx, instanceIdFlag); err != nil {
 		fmt.Printf("Error: %v\n", err)
 	}
 }
@@ -62,7 +71,10 @@ func runEC2RDP(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	if err := ec2Manager.RunRDP(ctx); err != nil {
+	// Get instance-id flag value
+	instanceIdFlag, _ := cmd.Flags().GetString("instance-id")
+
+	if err := ec2Manager.RunRDP(ctx, instanceIdFlag); err != nil {
 		fmt.Printf("Error: %v\n", err)
 	}
 }

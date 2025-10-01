@@ -156,11 +156,27 @@ func (s *SecretsManager) DisplaySecret(ctx context.Context, secretName, secretVa
 	}
 }
 
-func (s *SecretsManager) RunListSecrets(ctx context.Context) error {
+func (s *SecretsManager) RunShowSecrets(ctx context.Context, secretName string) error {
 	// Display AWS context
 	DisplayAWSContext(ctx)
 
-	// List secrets
+	// If secret name provided, try to show it directly
+	if secretName != "" {
+		fmt.Printf("Showing secret: %s\n", secretName)
+
+		// Get secret value
+		secretValue, err := s.GetSecretValue(ctx, secretName)
+		if err != nil {
+			fmt.Printf("Secret '%s' not found. Available secrets:\n\n", secretName)
+			// Fall through to show list of available secrets
+		} else {
+			// Display the secret and return
+			s.DisplaySecret(ctx, secretName, secretValue)
+			return nil
+		}
+	}
+
+	// List secrets for selection
 	secrets, err := s.ListSecrets(ctx)
 	if err != nil {
 		return fmt.Errorf("error listing secrets: %v", err)

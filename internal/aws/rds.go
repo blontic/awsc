@@ -81,7 +81,7 @@ func NewRDSManager(ctx context.Context, opts ...RDSManagerOptions) (*RDSManager,
 	}, nil
 }
 
-func (r *RDSManager) RunConnect(ctx context.Context, localPort int32) error {
+func (r *RDSManager) RunConnect(ctx context.Context, instanceName string, localPort int32) error {
 	// Display AWS context
 	DisplayAWSContext(ctx)
 
@@ -95,23 +95,49 @@ func (r *RDSManager) RunConnect(ctx context.Context, localPort int32) error {
 		return fmt.Errorf("no RDS instances found")
 	}
 
-	// Create instance options for selection
-	instanceOptions := make([]string, len(instances))
-	for i, instance := range instances {
-		instanceOptions[i] = fmt.Sprintf("%s (%s:%d)", instance.Identifier, instance.Engine, instance.Port)
+	var selectedInstance RDSInstance
+
+	// If instance name provided, try to connect directly
+	if instanceName != "" {
+		var targetInstance *RDSInstance
+		for _, instance := range instances {
+			if instance.Identifier == instanceName {
+				targetInstance = &instance
+				break
+			}
+		}
+
+		if targetInstance != nil {
+			fmt.Printf("Connecting to RDS instance: %s\n", targetInstance.Identifier)
+			selectedInstance = *targetInstance
+		} else {
+			fmt.Printf("RDS instance '%s' not found. Available instances:\n\n", instanceName)
+			// Fall through to show list of available instances
+		}
 	}
 
-	// Interactive instance selection
-	selectedIndex, err := ui.RunSelector("Select RDS Instance:", instanceOptions)
-	if err != nil {
-		return fmt.Errorf("error selecting instance: %v", err)
-	}
-	if selectedIndex == -1 {
-		return fmt.Errorf("no instance selected")
-	}
+	// If no instance name provided or instance not found, show interactive selection
+	if instanceName == "" || selectedInstance.Identifier == "" {
+		// Create instance options for selection
+		instanceOptions := make([]string, len(instances))
+		for i, instance := range instances {
+			instanceOptions[i] = fmt.Sprintf("%s (%s:%d)", instance.Identifier, instance.Engine, instance.Port)
+		}
 
-	selectedInstance := instances[selectedIndex]
-	fmt.Printf("Selected: %s\n", selectedInstance.Identifier)
+		// Interactive instance selection
+		selectedIndex, err := ui.RunSelector("Select RDS Instance:", instanceOptions)
+		if err != nil {
+			return fmt.Errorf("error selecting instance: %v", err)
+		}
+		if selectedIndex == -1 {
+			return fmt.Errorf("no instance selected")
+		}
+
+		selectedInstance = instances[selectedIndex]
+		fmt.Printf("Selected: %s\n", selectedInstance.Identifier)
+	} else {
+		fmt.Printf("Selected: %s\n", selectedInstance.Identifier)
+	}
 
 	// Find bastion hosts
 	bastions, err := r.FindBastionHosts(ctx, selectedInstance)

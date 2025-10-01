@@ -328,7 +328,7 @@ func HandleExpiredCredentials(ctx context.Context) error {
 		return fmt.Errorf("failed to create SSO manager: %v", err)
 	}
 
-	return ssoManager.RunLogin(ctx, true)
+	return ssoManager.RunLogin(ctx, true, "", "")
 }
 
 // CheckAWSSession verifies if there's a valid AWS session

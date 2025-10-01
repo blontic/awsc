@@ -17,10 +17,14 @@ var loginCmd = &cobra.Command{
 }
 
 var forceAuth bool
+var accountName string
+var roleName string
 
 func init() {
 	rootCmd.AddCommand(loginCmd)
 	loginCmd.Flags().BoolVar(&forceAuth, "force", false, "Force re-authentication by clearing cached tokens")
+	loginCmd.Flags().StringVar(&accountName, "account", "", "Account name to connect to (optional)")
+	loginCmd.Flags().StringVar(&roleName, "role", "", "Role name to assume (optional)")
 }
 
 func runSSOLogin(cmd *cobra.Command, args []string) {
@@ -33,7 +37,7 @@ func runSSOLogin(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	if err := ssoManager.RunLogin(ctx, forceAuth); err != nil {
+	if err := ssoManager.RunLogin(ctx, forceAuth, accountName, roleName); err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}

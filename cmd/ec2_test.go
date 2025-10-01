@@ -51,6 +51,16 @@ func TestEC2ConnectCommand(t *testing.T) {
 	if ec2ConnectCmd.Run == nil {
 		t.Error("ec2ConnectCmd should have Run function")
 	}
+
+	// Test instance-id flag
+	instanceIdFlag := ec2ConnectCmd.Flags().Lookup("instance-id")
+	if instanceIdFlag == nil {
+		t.Error("--instance-id flag should be defined for connect command")
+	}
+
+	if instanceIdFlag.DefValue != "" {
+		t.Errorf("Expected instance-id flag default to be empty, got '%s'", instanceIdFlag.DefValue)
+	}
 }
 
 func TestRunEC2Connect(t *testing.T) {
@@ -79,6 +89,16 @@ func TestEC2RdpCommand(t *testing.T) {
 
 	if ec2RdpCmd.Run == nil {
 		t.Error("ec2RdpCmd should have Run function")
+	}
+
+	// Test instance-id flag
+	instanceIdFlag := ec2RdpCmd.Flags().Lookup("instance-id")
+	if instanceIdFlag == nil {
+		t.Error("--instance-id flag should be defined for rdp command")
+	}
+
+	if instanceIdFlag.DefValue != "" {
+		t.Errorf("Expected instance-id flag default to be empty, got '%s'", instanceIdFlag.DefValue)
 	}
 }
 

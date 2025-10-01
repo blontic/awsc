@@ -13,18 +13,21 @@ var secretsCmd = &cobra.Command{
 	Short: "AWS Secrets Manager operations",
 }
 
-var secretsListCmd = &cobra.Command{
-	Use:   "list",
+var secretsShowCmd = &cobra.Command{
+	Use:   "show",
 	Short: "List and view secrets from AWS Secrets Manager",
-	Run:   runSecretsListCommand,
+	Run:   runSecretsShowCommand,
 }
 
+var secretName string
+
 func init() {
-	secretsCmd.AddCommand(secretsListCmd)
+	secretsShowCmd.Flags().StringVar(&secretName, "name", "", "Name of the secret to show directly")
+	secretsCmd.AddCommand(secretsShowCmd)
 	rootCmd.AddCommand(secretsCmd)
 }
 
-func runSecretsListCommand(cmd *cobra.Command, args []string) {
+func runSecretsShowCommand(cmd *cobra.Command, args []string) {
 	ctx := context.Background()
 
 	// Create secrets manager
@@ -34,8 +37,8 @@ func runSecretsListCommand(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	// Run the secrets list operation
-	if err := secretsManager.RunListSecrets(ctx); err != nil {
+	// Run the secrets show operation
+	if err := secretsManager.RunShowSecrets(ctx, secretName); err != nil {
 		fmt.Printf("Error: %v\n", err)
 	}
 }
