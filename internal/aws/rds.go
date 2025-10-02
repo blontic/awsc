@@ -1,10 +1,8 @@
 package aws
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -328,35 +326,10 @@ func (r *RDSManager) StartPortForwarding(ctx context.Context, bastionId, rdsEndp
 	fmt.Printf("Starting port forwarding via %s...\n", bastionId)
 
 	// Start port forwarding to remote host through bastion
-	err = pf.StartPortForwardingToRemoteHost(ctx, bastionId, rdsEndpoint, int(rdsPort), int(localPort))
-	if err != nil {
-		fmt.Printf("Port forwarding failed: %v\n", err)
-		return r.fallbackToCommand(bastionId, rdsEndpoint, rdsPort, localPort)
-	}
-	return nil
+	return pf.StartPortForwardingToRemoteHost(ctx, bastionId, rdsEndpoint, int(rdsPort), int(localPort))
 }
 
-func (r *RDSManager) fallbackToCommand(bastionId, rdsEndpoint string, rdsPort, localPort int32) error {
-	fmt.Printf("\nWould you like to run the command manually? (y/N): ")
 
-	reader := bufio.NewReader(os.Stdin)
-	response, err := reader.ReadString('\n')
-	if err != nil {
-		return err
-	}
-
-	response = strings.TrimSpace(strings.ToLower(response))
-	if response == "y" || response == "yes" {
-		parameters := fmt.Sprintf(`{"host":["%s"],"portNumber":["%d"],"localPortNumber":["%d"]}`,
-			rdsEndpoint, rdsPort, localPort)
-
-		fmt.Printf("\nRun this command:\n\n")
-		fmt.Printf("aws ssm start-session --target %s --document-name AWS-StartPortForwardingSessionToRemoteHost --parameters '%s' --region %s --profile swa\n\n",
-			bastionId, parameters, r.region)
-	}
-
-	return nil
-}
 
 func (r *RDSManager) getRDSSecurityGroups(ctx context.Context, dbIdentifier string) ([]string, error) {
 	result, err := r.rdsClient.DescribeDBInstances(ctx, &rds.DescribeDBInstancesInput{

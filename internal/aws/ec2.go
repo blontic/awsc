@@ -262,12 +262,7 @@ func (e *EC2Manager) StartSSMSession(ctx context.Context, instanceId string) err
 	pf := NewExternalPluginForwarder(cfg)
 
 	// Start interactive session
-	err = pf.StartInteractiveSession(ctx, instanceId)
-	if err != nil {
-		fmt.Printf("SSM session failed: %v\n", err)
-		return e.fallbackToCommand(instanceId)
-	}
-	return nil
+	return pf.StartInteractiveSession(ctx, instanceId)
 }
 
 func (e *EC2Manager) hasSSMAgent(ctx context.Context, instanceId string) bool {
@@ -361,20 +356,10 @@ func (e *EC2Manager) startRDPPortForwarding(ctx context.Context, instanceId stri
 	fmt.Printf("Starting RDP port forwarding on localhost:%d...\n", localPort)
 
 	// Start port forwarding for RDP
-	err = pf.StartPortForwardingToRemoteHost(ctx, instanceId, "localhost", remotePort, localPort)
-	if err != nil {
-		fmt.Printf("RDP port forwarding failed: %v\n", err)
-		return e.fallbackToRDPCommand(instanceId)
-	}
-	return nil
+	return pf.StartPortForwardingToRemoteHost(ctx, instanceId, "localhost", remotePort, localPort)
 }
 
-func (e *EC2Manager) fallbackToRDPCommand(instanceId string) error {
-	fmt.Printf("\nRun this command manually for RDP port forwarding:\n\n")
-	fmt.Printf("aws ssm start-session --target %s --document-name AWS-StartPortForwardingSession --parameters '{\"portNumber\":[\"3389\"],\"localPortNumber\":[\"3389\"]}' --region %s --profile swa\n\n", instanceId, e.region)
-	fmt.Printf("Then connect with RDP to: localhost:3389\n")
-	return nil
-}
+
 
 func (e *EC2Manager) reloadClients(ctx context.Context) error {
 	cfg, err := swaconfig.LoadSWAConfigWithProfile(ctx)
@@ -416,8 +401,4 @@ func (e *EC2Manager) selectInstance(title string, instances []EC2Instance) (*EC2
 	return &selectedInstance, nil
 }
 
-func (e *EC2Manager) fallbackToCommand(instanceId string) error {
-	fmt.Printf("\nRun this command manually:\n\n")
-	fmt.Printf("aws ssm start-session --target %s --region %s --profile swa\n\n", instanceId, e.region)
-	return nil
-}
+

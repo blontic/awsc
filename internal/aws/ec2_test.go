@@ -415,15 +415,7 @@ func TestEC2Manager_getPlatform(t *testing.T) {
 	}
 }
 
-func TestEC2Manager_fallbackToCommand(t *testing.T) {
-	manager := &EC2Manager{region: "us-east-1"}
 
-	// Test that fallbackToCommand doesn't panic and returns nil
-	err := manager.fallbackToCommand("i-123456789")
-	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
-	}
-}
 
 func TestEC2Manager_RunRDP_WindowsFiltering(t *testing.T) {
 	ctx := context.Background()
