@@ -65,9 +65,6 @@ func NewEC2Manager(ctx context.Context, opts ...EC2ManagerOptions) (*EC2Manager,
 }
 
 func (e *EC2Manager) RunConnect(ctx context.Context, instanceId string) error {
-	// Display AWS context
-	DisplayAWSContext(ctx)
-
 	// Get all instances first
 	allInstances, err := e.ListAllInstances(ctx)
 	if err != nil {
@@ -137,9 +134,6 @@ func (e *EC2Manager) RunConnect(ctx context.Context, instanceId string) error {
 }
 
 func (e *EC2Manager) RunRDP(ctx context.Context, instanceId string) error {
-	// Display AWS context
-	DisplayAWSContext(ctx)
-
 	// Get all instances first
 	allInstances, err := e.ListAllInstances(ctx)
 	if err != nil {
@@ -377,7 +371,7 @@ func (e *EC2Manager) startRDPPortForwarding(ctx context.Context, instanceId stri
 
 func (e *EC2Manager) fallbackToRDPCommand(instanceId string) error {
 	fmt.Printf("\nRun this command manually for RDP port forwarding:\n\n")
-	fmt.Printf("aws ssm start-session --target %s --document-name AWS-StartPortForwardingSession --parameters '{\"portNumber\":[\"3389\"],\"localPortNumber\":[\"3389\"]}' --region %s\n\n", instanceId, e.region)
+	fmt.Printf("aws ssm start-session --target %s --document-name AWS-StartPortForwardingSession --parameters '{\"portNumber\":[\"3389\"],\"localPortNumber\":[\"3389\"]}' --region %s --profile swa\n\n", instanceId, e.region)
 	fmt.Printf("Then connect with RDP to: localhost:3389\n")
 	return nil
 }
@@ -399,11 +393,7 @@ func (e *EC2Manager) selectInstance(title string, instances []EC2Instance) (*EC2
 	// Create instance options for selection
 	instanceOptions := make([]string, len(instances))
 	for i, instance := range instances {
-		if instance.IsSelectable {
-			instanceOptions[i] = fmt.Sprintf("%s (%s) - %s - %s", instance.Name, instance.InstanceId, instance.Platform, instance.State)
-		} else {
-			instanceOptions[i] = fmt.Sprintf("%s (%s) - %s - %s (unavailable)", instance.Name, instance.InstanceId, instance.Platform, instance.State)
-		}
+		instanceOptions[i] = fmt.Sprintf("%s (%s) - %s - %s", instance.Name, instance.InstanceId, instance.Platform, instance.State)
 	}
 
 	// Create selectability array
@@ -428,6 +418,6 @@ func (e *EC2Manager) selectInstance(title string, instances []EC2Instance) (*EC2
 
 func (e *EC2Manager) fallbackToCommand(instanceId string) error {
 	fmt.Printf("\nRun this command manually:\n\n")
-	fmt.Printf("aws ssm start-session --target %s --region %s\n\n", instanceId, e.region)
+	fmt.Printf("aws ssm start-session --target %s --region %s --profile swa\n\n", instanceId, e.region)
 	return nil
 }

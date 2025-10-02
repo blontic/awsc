@@ -159,9 +159,6 @@ func (s *SecretsManager) DisplaySecret(ctx context.Context, secretName, secretVa
 }
 
 func (s *SecretsManager) RunShowSecrets(ctx context.Context, secretName string) error {
-	// Display AWS context
-	DisplayAWSContext(ctx)
-
 	// If secret name provided, try to show it directly
 	if secretName != "" {
 		fmt.Printf("Showing secret: %s\n", secretName)

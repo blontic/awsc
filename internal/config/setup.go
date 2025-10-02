@@ -5,10 +5,57 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/spf13/viper"
 )
+
+// AWS regions list
+var awsRegions = map[string]bool{
+	"us-east-1":      true,
+	"us-east-2":      true,
+	"us-west-1":      true,
+	"us-west-2":      true,
+	"af-south-1":     true,
+	"ap-east-1":      true,
+	"ap-south-1":     true,
+	"ap-south-2":     true,
+	"ap-southeast-1": true,
+	"ap-southeast-2": true,
+	"ap-southeast-3": true,
+	"ap-southeast-4": true,
+	"ap-northeast-1": true,
+	"ap-northeast-2": true,
+	"ap-northeast-3": true,
+	"ca-central-1":   true,
+	"ca-west-1":      true,
+	"eu-central-1":   true,
+	"eu-central-2":   true,
+	"eu-west-1":      true,
+	"eu-west-2":      true,
+	"eu-west-3":      true,
+	"eu-north-1":     true,
+	"eu-south-1":     true,
+	"eu-south-2":     true,
+	"il-central-1":   true,
+	"me-central-1":   true,
+	"me-south-1":     true,
+	"sa-east-1":      true,
+}
+
+// SSO URL regex pattern
+var ssoURLPattern = regexp.MustCompile(`^https://[a-zA-Z0-9-]+\.awsapps\.com/start/?$`)
+
+// validateRegion checks if the region is a valid AWS region
+func validateRegion(region string) bool {
+	return awsRegions[region]
+}
+
+// validateSSOURL checks if the SSO URL matches the expected pattern
+func validateSSOURL(url string) bool {
+	return ssoURLPattern.MatchString(url)
+}
 
 func EnsureConfigExists() error {
 	// Check if config file exists
@@ -30,32 +77,53 @@ func InitializeConfig() error {
 	reader := bufio.NewReader(os.Stdin)
 
 	// Get SSO Start URL
-	fmt.Print("SSO Start URL: ")
-	ssoStartURL, err := reader.ReadString('\n')
-	if err != nil {
-		return err
+	var ssoStartURL string
+	for {
+		fmt.Print("SSO Start URL: ")
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			return err
+		}
+		ssoStartURL = strings.TrimSpace(input)
+		if validateSSOURL(ssoStartURL) {
+			break
+		}
+		fmt.Printf("Invalid SSO URL format. Expected: https://your-org.awsapps.com/start\n")
 	}
-	ssoStartURL = strings.TrimSpace(ssoStartURL)
 
 	// Get SSO Region
-	fmt.Print("SSO Region (e.g., us-east-1): ")
-	ssoRegion, err := reader.ReadString('\n')
-	if err != nil {
-		return err
+	var ssoRegion string
+	for {
+		fmt.Print("SSO Region (e.g., us-east-1): ")
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			return err
+		}
+		ssoRegion = strings.TrimSpace(input)
+		if validateRegion(ssoRegion) {
+			break
+		}
+		fmt.Printf("Invalid AWS region. Please enter a valid region like us-east-1, us-west-2, etc.\n")
 	}
-	ssoRegion = strings.TrimSpace(ssoRegion)
 
 	// Get Default Region
-	fmt.Print("Default AWS Region (e.g., us-east-1): ")
-	defaultRegion, err := reader.ReadString('\n')
-	if err != nil {
-		return err
+	var defaultRegion string
+	for {
+		fmt.Print("Default AWS Region (e.g., us-east-1): ")
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			return err
+		}
+		defaultRegion = strings.TrimSpace(input)
+		if validateRegion(defaultRegion) {
+			break
+		}
+		fmt.Printf("Invalid AWS region. Please enter a valid region like us-east-1, us-west-2, etc.\n")
 	}
-	defaultRegion = strings.TrimSpace(defaultRegion)
 
-	// Create config directory
+	// Create config directory with secure permissions
 	configDir := filepath.Dir(GetConfigPath())
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	if err := os.MkdirAll(configDir, 0700); err != nil {
 		return fmt.Errorf("failed to create config directory: %v", err)
 	}
 
@@ -67,6 +135,11 @@ func InitializeConfig() error {
 	// Write config file
 	if err := viper.WriteConfigAs(GetConfigPath()); err != nil {
 		return fmt.Errorf("failed to write config file: %v", err)
+	}
+
+	// Set secure permissions on config file
+	if err := os.Chmod(GetConfigPath(), 0600); err != nil {
+		return fmt.Errorf("failed to set config file permissions: %v", err)
 	}
 
 	fmt.Printf("Configuration saved to %s\n", GetConfigPath())

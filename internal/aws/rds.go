@@ -82,9 +82,6 @@ func NewRDSManager(ctx context.Context, opts ...RDSManagerOptions) (*RDSManager,
 }
 
 func (r *RDSManager) RunConnect(ctx context.Context, instanceName string, localPort int32) error {
-	// Display AWS context
-	DisplayAWSContext(ctx)
-
 	// List RDS instances
 	instances, err := r.ListRDSInstances(ctx)
 	if err != nil {
@@ -354,7 +351,7 @@ func (r *RDSManager) fallbackToCommand(bastionId, rdsEndpoint string, rdsPort, l
 			rdsEndpoint, rdsPort, localPort)
 
 		fmt.Printf("\nRun this command:\n\n")
-		fmt.Printf("aws ssm start-session --target %s --document-name AWS-StartPortForwardingSessionToRemoteHost --parameters '%s' --region %s\n\n",
+		fmt.Printf("aws ssm start-session --target %s --document-name AWS-StartPortForwardingSessionToRemoteHost --parameters '%s' --region %s --profile swa\n\n",
 			bastionId, parameters, r.region)
 	}
 

@@ -1,10 +1,14 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	swaconfig "github.com/blontic/swa/internal/config"
 )
 
 type SelectorModel struct {
@@ -18,6 +22,13 @@ type SelectorModel struct {
 	selected           int
 	title              string
 	done               bool
+	awsContext         *AWSContext
+}
+
+type AWSContext struct {
+	Account string
+	Role    string
+	Region  string
 }
 
 func NewSelector(title string, choices []string) SelectorModel {
@@ -30,6 +41,7 @@ func NewSelector(title string, choices []string) SelectorModel {
 		selectable: selectable,
 		title:      title,
 		selected:   -1,
+		awsContext: getAWSContext(),
 	}
 	m.updateFilter()
 	return m
@@ -41,6 +53,7 @@ func NewSelectorWithSelectability(title string, choices []string, selectable []b
 		selectable: selectable,
 		title:      title,
 		selected:   -1,
+		awsContext: getAWSContext(),
 	}
 	m.updateFilter()
 	// Find first selectable item in filtered results
@@ -59,6 +72,9 @@ func (m SelectorModel) Init() tea.Cmd {
 
 func (m SelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		// Handle window resize - no action needed, just return
+		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "q":
@@ -111,6 +127,18 @@ func (m SelectorModel) View() string {
 	}
 
 	s := strings.Builder{}
+	
+	// AWS Context Header
+	if m.awsContext != nil {
+		headerText := fmt.Sprintf("Account: %s | Role: %s | Region: %s",
+			m.awsContext.Account,
+			m.awsContext.Role,
+			m.awsContext.Region)
+		
+		s.WriteString(headerText)
+		s.WriteString("\n\n")
+	}
+	
 	s.WriteString(fmt.Sprintf("%s\n", m.title))
 	if m.filter != "" {
 		s.WriteString(fmt.Sprintf("Filter: %s\n\n", m.filter))
@@ -122,14 +150,13 @@ func (m SelectorModel) View() string {
 		s.WriteString("No matches found\n")
 	} else {
 		for i, choice := range m.filteredChoices {
-			cursor := " "
-			if m.cursor == i {
-				cursor = ">"
-			}
 			if !m.filteredSelectable[i] {
 				s.WriteString(fmt.Sprintf("  %s (disabled)\n", choice))
+			} else if m.cursor == i {
+				boldStyle := lipgloss.NewStyle().Bold(true)
+				s.WriteString(fmt.Sprintf("▶ %s\n", boldStyle.Render(choice)))
 			} else {
-				s.WriteString(fmt.Sprintf("%s %s\n", cursor, choice))
+				s.WriteString(fmt.Sprintf("  %s\n", choice))
 			}
 		}
 	}
@@ -253,4 +280,44 @@ func runSimpleSelectorWithSelectability(title string, choices []string, selectab
 	}
 
 	return indexMap[choice-1], nil
+}
+
+func getAWSContext() *AWSContext {
+	ctx := context.Background()
+	cfg, err := swaconfig.LoadSWAConfigWithProfile(ctx)
+	if err != nil {
+		return nil
+	}
+	
+	stsClient := sts.NewFromConfig(cfg)
+	identity, err := stsClient.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+	if err != nil {
+		return nil
+	}
+	
+	// Parse ARN to get account and role
+	accountId := *identity.Account
+	role := "unknown"
+	
+	if identity.Arn != nil {
+		// ARN format: arn:aws:sts::123456789012:assumed-role/RoleName/SessionName
+		parts := strings.Split(*identity.Arn, "/")
+		if len(parts) >= 2 && strings.Contains(*identity.Arn, "assumed-role") {
+			role = parts[1]
+		}
+	}
+	
+	// Get account name from cache, fallback to account ID
+	account := swaconfig.GetAccountName(accountId)
+	
+	region := cfg.Region
+	if region == "" {
+		region = "default"
+	}
+	
+	return &AWSContext{
+		Account: account,
+		Role:    role,
+		Region:  region,
+	}
 }

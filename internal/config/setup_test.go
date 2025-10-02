@@ -136,3 +136,55 @@ func TestEnsureConfigExists_FileExists(t *testing.T) {
 		t.Errorf("EnsureConfigExists should return nil when file exists, got: %v", err)
 	}
 }
+
+func TestValidateRegion(t *testing.T) {
+	tests := []struct {
+		region string
+		valid  bool
+	}{
+		{"us-east-1", true},
+		{"us-west-2", true},
+		{"eu-west-1", true},
+		{"ap-southeast-1", true},
+		{"invalid-region", false},
+		{"us-east-99", false},
+		{"", false},
+		{"US-EAST-1", false}, // case sensitive
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.region, func(t *testing.T) {
+			result := validateRegion(tt.region)
+			if result != tt.valid {
+				t.Errorf("validateRegion(%q) = %v, want %v", tt.region, result, tt.valid)
+			}
+		})
+	}
+}
+
+func TestValidateSSOURL(t *testing.T) {
+	tests := []struct {
+		url   string
+		valid bool
+	}{
+		{"https://myorg.awsapps.com/start", true},
+		{"https://my-org.awsapps.com/start", true},
+		{"https://test123.awsapps.com/start/", true}, // trailing slash
+		{"https://myorg.awsapps.com/start/extra", false},
+		{"http://myorg.awsapps.com/start", false}, // http not https
+		{"https://myorg.amazonaws.com/start", false}, // wrong domain
+		{"https://my_org.awsapps.com/start", false}, // underscore not allowed
+		{"myorg.awsapps.com/start", false}, // missing https
+		{"", false},
+		{"https://.awsapps.com/start", false}, // empty subdomain
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.url, func(t *testing.T) {
+			result := validateSSOURL(tt.url)
+			if result != tt.valid {
+				t.Errorf("validateSSOURL(%q) = %v, want %v", tt.url, result, tt.valid)
+			}
+		})
+	}
+}
