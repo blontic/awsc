@@ -329,8 +329,6 @@ func (r *RDSManager) StartPortForwarding(ctx context.Context, bastionId, rdsEndp
 	return pf.StartPortForwardingToRemoteHost(ctx, bastionId, rdsEndpoint, int(rdsPort), int(localPort))
 }
 
-
-
 func (r *RDSManager) getRDSSecurityGroups(ctx context.Context, dbIdentifier string) ([]string, error) {
 	result, err := r.rdsClient.DescribeDBInstances(ctx, &rds.DescribeDBInstancesInput{
 		DBInstanceIdentifier: aws.String(dbIdentifier),

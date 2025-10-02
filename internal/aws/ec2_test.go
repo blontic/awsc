@@ -415,8 +415,6 @@ func TestEC2Manager_getPlatform(t *testing.T) {
 	}
 }
 
-
-
 func TestEC2Manager_RunRDP_WindowsFiltering(t *testing.T) {
 	ctx := context.Background()
 	ctrl := gomock.NewController(t)

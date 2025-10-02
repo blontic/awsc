@@ -101,7 +101,6 @@ func (s *SSOManager) GetRoleCredentials(ctx context.Context, accessToken, accoun
 // RunLogin handles the complete SSO login workflow
 func (s *SSOManager) RunLogin(ctx context.Context, force bool, accountName, roleName string) error {
 
-
 	// Check if config exists
 	if viper.GetString("sso.start_url") == "" {
 		return fmt.Errorf("no SSO configuration found. Please run 'swa config init' first")
@@ -120,7 +119,7 @@ func (s *SSOManager) RunLogin(ctx context.Context, force bool, accountName, role
 			// Try listing accounts to see if SSO token works
 			accounts, listErr := s.ListAccounts(ctx, *accessToken)
 			if listErr == nil && len(accounts) > 0 {
-					// SSO token works, save account cache and proceed with account/role selection
+				// SSO token works, save account cache and proceed with account/role selection
 				if err := swaconfig.SaveAccountCache(accounts); err != nil {
 					// Don't fail login if cache save fails
 					fmt.Printf("Warning: failed to save account cache: %v\n", err)

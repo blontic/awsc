@@ -171,10 +171,10 @@ func TestValidateSSOURL(t *testing.T) {
 		{"https://my-org.awsapps.com/start", true},
 		{"https://test123.awsapps.com/start/", true}, // trailing slash
 		{"https://myorg.awsapps.com/start/extra", false},
-		{"http://myorg.awsapps.com/start", false}, // http not https
+		{"http://myorg.awsapps.com/start", false},    // http not https
 		{"https://myorg.amazonaws.com/start", false}, // wrong domain
-		{"https://my_org.awsapps.com/start", false}, // underscore not allowed
-		{"myorg.awsapps.com/start", false}, // missing https
+		{"https://my_org.awsapps.com/start", false},  // underscore not allowed
+		{"myorg.awsapps.com/start", false},           // missing https
 		{"", false},
 		{"https://.awsapps.com/start", false}, // empty subdomain
 	}

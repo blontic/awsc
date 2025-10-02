@@ -6,9 +6,9 @@ import (
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	swaconfig "github.com/blontic/swa/internal/config"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	swaconfig "github.com/blontic/swa/internal/config"
 )
 
 type SelectorModel struct {
@@ -127,18 +127,18 @@ func (m SelectorModel) View() string {
 	}
 
 	s := strings.Builder{}
-	
+
 	// AWS Context Header
 	if m.awsContext != nil {
 		headerText := fmt.Sprintf("Account: %s | Role: %s | Region: %s",
 			m.awsContext.Account,
 			m.awsContext.Role,
 			m.awsContext.Region)
-		
+
 		s.WriteString(headerText)
 		s.WriteString("\n\n")
 	}
-	
+
 	s.WriteString(fmt.Sprintf("%s\n", m.title))
 	if m.filter != "" {
 		s.WriteString(fmt.Sprintf("Filter: %s\n\n", m.filter))
@@ -288,17 +288,17 @@ func getAWSContext() *AWSContext {
 	if err != nil {
 		return nil
 	}
-	
+
 	stsClient := sts.NewFromConfig(cfg)
 	identity, err := stsClient.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
 	if err != nil {
 		return nil
 	}
-	
+
 	// Parse ARN to get account and role
 	accountId := *identity.Account
 	role := "unknown"
-	
+
 	if identity.Arn != nil {
 		// ARN format: arn:aws:sts::123456789012:assumed-role/RoleName/SessionName
 		parts := strings.Split(*identity.Arn, "/")
@@ -306,15 +306,15 @@ func getAWSContext() *AWSContext {
 			role = parts[1]
 		}
 	}
-	
+
 	// Get account name from cache, fallback to account ID
 	account := swaconfig.GetAccountName(accountId)
-	
+
 	region := cfg.Region
 	if region == "" {
 		region = "default"
 	}
-	
+
 	return &AWSContext{
 		Account: account,
 		Role:    role,

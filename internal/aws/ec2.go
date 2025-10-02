@@ -359,8 +359,6 @@ func (e *EC2Manager) startRDPPortForwarding(ctx context.Context, instanceId stri
 	return pf.StartPortForwardingToRemoteHost(ctx, instanceId, "localhost", remotePort, localPort)
 }
 
-
-
 func (e *EC2Manager) reloadClients(ctx context.Context) error {
 	cfg, err := swaconfig.LoadSWAConfigWithProfile(ctx)
 	if err != nil {
@@ -400,5 +398,3 @@ func (e *EC2Manager) selectInstance(title string, instances []EC2Instance) (*EC2
 	fmt.Printf("Selected: %s\n", selectedInstance.Name)
 	return &selectedInstance, nil
 }
-
-
