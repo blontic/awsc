@@ -65,9 +65,6 @@ func NewEC2Manager(ctx context.Context, opts ...EC2ManagerOptions) (*EC2Manager,
 }
 
 func (e *EC2Manager) RunConnect(ctx context.Context, instanceId string) error {
-	// Display AWS context
-	DisplayAWSContext(ctx)
-
 	// Get all instances first
 	allInstances, err := e.ListAllInstances(ctx)
 	if err != nil {
@@ -137,9 +134,6 @@ func (e *EC2Manager) RunConnect(ctx context.Context, instanceId string) error {
 }
 
 func (e *EC2Manager) RunRDP(ctx context.Context, instanceId string) error {
-	// Display AWS context
-	DisplayAWSContext(ctx)
-
 	// Get all instances first
 	allInstances, err := e.ListAllInstances(ctx)
 	if err != nil {

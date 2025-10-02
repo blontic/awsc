@@ -82,9 +82,6 @@ func NewRDSManager(ctx context.Context, opts ...RDSManagerOptions) (*RDSManager,
 }
 
 func (r *RDSManager) RunConnect(ctx context.Context, instanceName string, localPort int32) error {
-	// Display AWS context
-	DisplayAWSContext(ctx)
-
 	// List RDS instances
 	instances, err := r.ListRDSInstances(ctx)
 	if err != nil {

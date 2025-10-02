@@ -100,10 +100,7 @@ func (s *SSOManager) GetRoleCredentials(ctx context.Context, accessToken, accoun
 
 // RunLogin handles the complete SSO login workflow
 func (s *SSOManager) RunLogin(ctx context.Context, force bool, accountName, roleName string) error {
-	// Display current AWS context if available
-	if !force {
-		DisplayAWSContext(ctx)
-	}
+
 
 	// Check if config exists
 	if viper.GetString("sso.start_url") == "" {
@@ -123,7 +120,11 @@ func (s *SSOManager) RunLogin(ctx context.Context, force bool, accountName, role
 			// Try listing accounts to see if SSO token works
 			accounts, listErr := s.ListAccounts(ctx, *accessToken)
 			if listErr == nil && len(accounts) > 0 {
-				// SSO token works, proceed with account/role selection
+					// SSO token works, save account cache and proceed with account/role selection
+				if err := swaconfig.SaveAccountCache(accounts); err != nil {
+					// Don't fail login if cache save fails
+					fmt.Printf("Warning: failed to save account cache: %v\n", err)
+				}
 				return s.handleAccountRoleSelection(ctx, *accessToken, accounts, accountName, roleName)
 			}
 		}
@@ -154,6 +155,12 @@ func (s *SSOManager) RunLogin(ctx context.Context, force bool, accountName, role
 
 	if len(accounts) == 0 {
 		return fmt.Errorf("no accounts found")
+	}
+
+	// Save account cache
+	if err := swaconfig.SaveAccountCache(accounts); err != nil {
+		// Don't fail login if cache save fails, just log it
+		fmt.Printf("Warning: failed to save account cache: %v\n", err)
 	}
 
 	return s.handleAccountRoleSelection(ctx, *accessToken, accounts, accountName, roleName)
