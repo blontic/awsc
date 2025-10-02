@@ -354,7 +354,7 @@ func (r *RDSManager) fallbackToCommand(bastionId, rdsEndpoint string, rdsPort, l
 			rdsEndpoint, rdsPort, localPort)
 
 		fmt.Printf("\nRun this command:\n\n")
-		fmt.Printf("aws ssm start-session --target %s --document-name AWS-StartPortForwardingSessionToRemoteHost --parameters '%s' --region %s\n\n",
+		fmt.Printf("aws ssm start-session --target %s --document-name AWS-StartPortForwardingSessionToRemoteHost --parameters '%s' --region %s --profile swa\n\n",
 			bastionId, parameters, r.region)
 	}
 

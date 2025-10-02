@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"strconv"
@@ -29,6 +30,11 @@ func (pf *ExternalPluginForwarder) StartPortForwardingToRemoteHost(ctx context.C
 	// Check if session-manager-plugin is available
 	if _, err := exec.LookPath("session-manager-plugin"); err != nil {
 		return pf.handleMissingPlugin()
+	}
+
+	// Check if local port is available
+	if err := pf.checkPortAvailable(localPort); err != nil {
+		return err
 	}
 
 	// Start SSM session
@@ -71,6 +77,7 @@ func (pf *ExternalPluginForwarder) StartPortForwardingToRemoteHost(ctx context.C
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
 
+	// Start the plugin and wait for it to complete
 	return cmd.Run()
 }
 
@@ -113,7 +120,19 @@ func (pf *ExternalPluginForwarder) StartInteractiveSession(ctx context.Context, 
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
 
+	// Start the plugin and wait for it to complete
 	return cmd.Run()
+}
+
+func (pf *ExternalPluginForwarder) checkPortAvailable(port int) error {
+	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		fmt.Printf("\nError: Port %d is already in use.\n", port)
+		fmt.Printf("Try using a different port with --local-port <port>\n")
+		os.Exit(1)
+	}
+	listener.Close()
+	return nil
 }
 
 func (pf *ExternalPluginForwarder) handleMissingPlugin() error {

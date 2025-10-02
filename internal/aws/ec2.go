@@ -399,11 +399,7 @@ func (e *EC2Manager) selectInstance(title string, instances []EC2Instance) (*EC2
 	// Create instance options for selection
 	instanceOptions := make([]string, len(instances))
 	for i, instance := range instances {
-		if instance.IsSelectable {
-			instanceOptions[i] = fmt.Sprintf("%s (%s) - %s - %s", instance.Name, instance.InstanceId, instance.Platform, instance.State)
-		} else {
-			instanceOptions[i] = fmt.Sprintf("%s (%s) - %s - %s (unavailable)", instance.Name, instance.InstanceId, instance.Platform, instance.State)
-		}
+		instanceOptions[i] = fmt.Sprintf("%s (%s) - %s - %s", instance.Name, instance.InstanceId, instance.Platform, instance.State)
 	}
 
 	// Create selectability array
