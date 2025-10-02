@@ -121,9 +121,9 @@ func InitializeConfig() error {
 		fmt.Printf("Invalid AWS region. Please enter a valid region like us-east-1, us-west-2, etc.\n")
 	}
 
-	// Create config directory
+	// Create config directory with secure permissions
 	configDir := filepath.Dir(GetConfigPath())
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	if err := os.MkdirAll(configDir, 0700); err != nil {
 		return fmt.Errorf("failed to create config directory: %v", err)
 	}
 
@@ -135,6 +135,11 @@ func InitializeConfig() error {
 	// Write config file
 	if err := viper.WriteConfigAs(GetConfigPath()); err != nil {
 		return fmt.Errorf("failed to write config file: %v", err)
+	}
+
+	// Set secure permissions on config file
+	if err := os.Chmod(GetConfigPath(), 0600); err != nil {
+		return fmt.Errorf("failed to set config file permissions: %v", err)
 	}
 
 	fmt.Printf("Configuration saved to %s\n", GetConfigPath())

@@ -29,9 +29,9 @@ func SaveAccountCache(accounts []types.AccountInfo) error {
 		}
 	}
 
-	// Create .swa directory if it doesn't exist
+	// Create .swa directory if it doesn't exist with secure permissions
 	cacheDir := filepath.Dir(GetAccountCachePath())
-	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+	if err := os.MkdirAll(cacheDir, 0700); err != nil {
 		return err
 	}
 
@@ -41,7 +41,7 @@ func SaveAccountCache(accounts []types.AccountInfo) error {
 		return err
 	}
 
-	return os.WriteFile(GetAccountCachePath(), data, 0644)
+	return os.WriteFile(GetAccountCachePath(), data, 0600)
 }
 
 // GetAccountName returns account name for given account ID, or the ID if not found
