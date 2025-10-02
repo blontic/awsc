@@ -371,7 +371,7 @@ func (e *EC2Manager) startRDPPortForwarding(ctx context.Context, instanceId stri
 
 func (e *EC2Manager) fallbackToRDPCommand(instanceId string) error {
 	fmt.Printf("\nRun this command manually for RDP port forwarding:\n\n")
-	fmt.Printf("aws ssm start-session --target %s --document-name AWS-StartPortForwardingSession --parameters '{\"portNumber\":[\"3389\"],\"localPortNumber\":[\"3389\"]}' --region %s\n\n", instanceId, e.region)
+	fmt.Printf("aws ssm start-session --target %s --document-name AWS-StartPortForwardingSession --parameters '{\"portNumber\":[\"3389\"],\"localPortNumber\":[\"3389\"]}' --region %s --profile swa\n\n", instanceId, e.region)
 	fmt.Printf("Then connect with RDP to: localhost:3389\n")
 	return nil
 }
@@ -418,6 +418,6 @@ func (e *EC2Manager) selectInstance(title string, instances []EC2Instance) (*EC2
 
 func (e *EC2Manager) fallbackToCommand(instanceId string) error {
 	fmt.Printf("\nRun this command manually:\n\n")
-	fmt.Printf("aws ssm start-session --target %s --region %s\n\n", instanceId, e.region)
+	fmt.Printf("aws ssm start-session --target %s --region %s --profile swa\n\n", instanceId, e.region)
 	return nil
 }
