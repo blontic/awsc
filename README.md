@@ -7,7 +7,7 @@ A CLI tool for AWS SSO authentication, RDS port forwarding, EC2 sessions, and Se
 ## Features
 
 - **SSO Authentication** - Seamless AWS SSO login with account/role selection and credential caching
-- **RDS Port Forwarding** - Connect to private RDS instances with automatic bastion host discovery and security group analysis
+- **RDS Port Forwarding** - Connect to private RDS instances and Aurora clusters with automatic bastion host discovery and security group analysis
 - **EC2 Sessions** - Interactive SSH sessions via AWS Systems Manager with automatic SSM agent detection
 - **Windows RDP** - Port forwarding for Windows instances with RDP protocol support
 - **Secrets Manager** - View and manage AWS Secrets Manager secrets
@@ -41,8 +41,9 @@ All commands support both interactive selection and direct parameter access:
 ./awsc login --account my-account --role my-role  # Login to specific account and role directly
 
 # RDS Port Forwarding
-./awsc rds connect             # List and select RDS instances interactively
+./awsc rds connect             # List and select RDS instances and Aurora clusters interactively
 ./awsc rds connect --name my-db-instance  # Connect to specific RDS instance directly
+./awsc rds connect --name "my-cluster (reader)"  # Connect to Aurora cluster reader endpoint
 ./awsc rds connect --name my-db-instance --local-port 5432  # Connect with custom local port
 
 # EC2 Sessions
