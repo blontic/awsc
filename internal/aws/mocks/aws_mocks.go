@@ -44,6 +44,26 @@ func (m *MockRDSClient) EXPECT() *MockRDSClientMockRecorder {
 	return m.recorder
 }
 
+// DescribeDBClusters mocks base method.
+func (m *MockRDSClient) DescribeDBClusters(ctx context.Context, params *rds.DescribeDBClustersInput, optFns ...func(*rds.Options)) (*rds.DescribeDBClustersOutput, error) {
+	m.ctrl.T.Helper()
+	varargs := []any{ctx, params}
+	for _, a := range optFns {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "DescribeDBClusters", varargs...)
+	ret0, _ := ret[0].(*rds.DescribeDBClustersOutput)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// DescribeDBClusters indicates an expected call of DescribeDBClusters.
+func (mr *MockRDSClientMockRecorder) DescribeDBClusters(ctx, params any, optFns ...any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	varargs := append([]any{ctx, params}, optFns...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DescribeDBClusters", reflect.TypeOf((*MockRDSClient)(nil).DescribeDBClusters), varargs...)
+}
+
 // DescribeDBInstances mocks base method.
 func (m *MockRDSClient) DescribeDBInstances(ctx context.Context, params *rds.DescribeDBInstancesInput, optFns ...func(*rds.Options)) (*rds.DescribeDBInstancesOutput, error) {
 	m.ctrl.T.Helper()

@@ -2,6 +2,7 @@ package aws
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -147,6 +148,12 @@ func TestRDSManager_ListRDSInstances(t *testing.T) {
 				Return(tt.mockResponse, tt.mockError).
 				Times(1)
 
+			// Mock DescribeDBClusters call for cluster endpoints
+			mockRDS.EXPECT().
+				DescribeDBClusters(gomock.Any(), gomock.Any()).
+				Return(&rds.DescribeDBClustersOutput{DBClusters: []rdstypes.DBCluster{}}, nil).
+				Times(1)
+
 			instances, err := manager.ListRDSInstances(context.Background())
 
 			if tt.expectedError && err == nil {
@@ -234,7 +241,11 @@ func TestRDSManager_getRDSSecurityGroups(t *testing.T) {
 				Return(tt.mockResponse, tt.mockError).
 				Times(1)
 
-			sgs, err := manager.getRDSSecurityGroups(context.Background(), tt.dbIdentifier)
+			rdsInstance := RDSInstance{
+				Identifier:   tt.dbIdentifier,
+				EndpointType: "instance",
+			}
+			sgs, err := manager.getRDSSecurityGroups(context.Background(), rdsInstance)
 
 			if tt.expectedErr && err == nil {
 				t.Error("Expected error but got none")
@@ -613,5 +624,286 @@ func TestRDSManager_FindBastionHosts_EmptyResponse(t *testing.T) {
 	}
 	if len(bastions) != 0 {
 		t.Errorf("Expected 0 bastions, got %d", len(bastions))
+	}
+}
+
+func TestRDSManager_getClusterEndpoints(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockRDS := mocks.NewMockRDSClient(ctrl)
+	mockEC2 := mocks.NewMockEC2Client(ctrl)
+
+	manager, err := NewRDSManager(context.Background(), RDSManagerOptions{
+		RDSClient: mockRDS,
+		EC2Client: mockEC2,
+		SSMClient: nil,
+		Region:    "us-east-1",
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error creating manager: %v", err)
+	}
+
+	tests := []struct {
+		name          string
+		mockResponse  *rds.DescribeDBClustersOutput
+		expectedCount int
+		expectedTypes []string
+	}{
+		{
+			name: "Aurora cluster with writer and reader endpoints",
+			mockResponse: &rds.DescribeDBClustersOutput{
+				DBClusters: []rdstypes.DBCluster{
+					{
+						DBClusterIdentifier: aws.String("aurora-cluster-1"),
+						Status:              aws.String("available"),
+						Engine:              aws.String("aurora-mysql"),
+						Port:                aws.Int32(3306),
+						Endpoint:            aws.String("aurora-cluster-1.cluster-xyz.us-east-1.rds.amazonaws.com"),
+						ReaderEndpoint:      aws.String("aurora-cluster-1.cluster-ro-xyz.us-east-1.rds.amazonaws.com"),
+					},
+				},
+			},
+			expectedCount: 2,
+			expectedTypes: []string{"cluster-writer", "cluster-reader"},
+		},
+		{
+			name: "Aurora cluster with only writer endpoint",
+			mockResponse: &rds.DescribeDBClustersOutput{
+				DBClusters: []rdstypes.DBCluster{
+					{
+						DBClusterIdentifier: aws.String("aurora-cluster-2"),
+						Status:              aws.String("available"),
+						Engine:              aws.String("aurora-postgresql"),
+						Port:                aws.Int32(5432),
+						Endpoint:            aws.String("aurora-cluster-2.cluster-abc.us-east-1.rds.amazonaws.com"),
+						ReaderEndpoint:      nil,
+					},
+				},
+			},
+			expectedCount: 1,
+			expectedTypes: []string{"cluster-writer"},
+		},
+		{
+			name: "No available clusters",
+			mockResponse: &rds.DescribeDBClustersOutput{
+				DBClusters: []rdstypes.DBCluster{
+					{
+						DBClusterIdentifier: aws.String("aurora-cluster-stopped"),
+						Status:              aws.String("stopped"),
+						Engine:              aws.String("aurora-mysql"),
+						Port:                aws.Int32(3306),
+						Endpoint:            aws.String("aurora-cluster-stopped.cluster-xyz.us-east-1.rds.amazonaws.com"),
+					},
+				},
+			},
+			expectedCount: 0,
+			expectedTypes: []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockRDS.EXPECT().
+				DescribeDBClusters(gomock.Any(), gomock.Any()).
+				Return(tt.mockResponse, nil).
+				Times(1)
+
+			instances, err := manager.getClusterEndpoints(context.Background())
+
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+			if len(instances) != tt.expectedCount {
+				t.Errorf("Expected %d instances, got %d", tt.expectedCount, len(instances))
+			}
+
+			for i, instance := range instances {
+				if i < len(tt.expectedTypes) && instance.EndpointType != tt.expectedTypes[i] {
+					t.Errorf("Expected endpoint type %s, got %s", tt.expectedTypes[i], instance.EndpointType)
+				}
+				if instance.EndpointType == "cluster-writer" && !strings.Contains(instance.Identifier, "(writer)") {
+					t.Errorf("Writer endpoint should contain '(writer)' in identifier")
+				}
+				if instance.EndpointType == "cluster-reader" && !strings.Contains(instance.Identifier, "(reader)") {
+					t.Errorf("Reader endpoint should contain '(reader)' in identifier")
+				}
+			}
+		})
+	}
+}
+
+func TestRDSManager_getRDSSecurityGroups_Cluster(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockRDS := mocks.NewMockRDSClient(ctrl)
+	mockEC2 := mocks.NewMockEC2Client(ctrl)
+
+	manager, err := NewRDSManager(context.Background(), RDSManagerOptions{
+		RDSClient: mockRDS,
+		EC2Client: mockEC2,
+		SSMClient: nil,
+		Region:    "us-east-1",
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error creating manager: %v", err)
+	}
+
+	tests := []struct {
+		name         string
+		rdsInstance  RDSInstance
+		mockResponse *rds.DescribeDBClustersOutput
+		expectedSGs  []string
+		expectedErr  bool
+	}{
+		{
+			name: "cluster writer endpoint security groups",
+			rdsInstance: RDSInstance{
+				Identifier:   "aurora-cluster (writer)",
+				EndpointType: "cluster-writer",
+				ClusterName:  "aurora-cluster",
+			},
+			mockResponse: &rds.DescribeDBClustersOutput{
+				DBClusters: []rdstypes.DBCluster{
+					{
+						VpcSecurityGroups: []rdstypes.VpcSecurityGroupMembership{
+							{VpcSecurityGroupId: aws.String("sg-cluster-123")},
+							{VpcSecurityGroupId: aws.String("sg-cluster-456")},
+						},
+					},
+				},
+			},
+			expectedSGs: []string{"sg-cluster-123", "sg-cluster-456"},
+			expectedErr: false,
+		},
+		{
+			name: "cluster reader endpoint security groups",
+			rdsInstance: RDSInstance{
+				Identifier:   "aurora-cluster (reader)",
+				EndpointType: "cluster-reader",
+				ClusterName:  "aurora-cluster",
+			},
+			mockResponse: &rds.DescribeDBClustersOutput{
+				DBClusters: []rdstypes.DBCluster{
+					{
+						VpcSecurityGroups: []rdstypes.VpcSecurityGroupMembership{
+							{VpcSecurityGroupId: aws.String("sg-cluster-789")},
+						},
+					},
+				},
+			},
+			expectedSGs: []string{"sg-cluster-789"},
+			expectedErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockRDS.EXPECT().
+				DescribeDBClusters(gomock.Any(), &rds.DescribeDBClustersInput{
+					DBClusterIdentifier: aws.String(tt.rdsInstance.ClusterName),
+				}).
+				Return(tt.mockResponse, nil).
+				Times(1)
+
+			sgs, err := manager.getRDSSecurityGroups(context.Background(), tt.rdsInstance)
+
+			if tt.expectedErr && err == nil {
+				t.Error("Expected error but got none")
+			}
+			if !tt.expectedErr && err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+			if len(sgs) != len(tt.expectedSGs) {
+				t.Errorf("Expected %d security groups, got %d", len(tt.expectedSGs), len(sgs))
+			}
+			for i, sg := range sgs {
+				if i < len(tt.expectedSGs) && sg != tt.expectedSGs[i] {
+					t.Errorf("Expected security group %s, got %s", tt.expectedSGs[i], sg)
+				}
+			}
+		})
+	}
+}
+
+func TestRDSManager_ListRDSInstances_WithClusters(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockRDS := mocks.NewMockRDSClient(ctrl)
+	mockEC2 := mocks.NewMockEC2Client(ctrl)
+
+	manager, err := NewRDSManager(context.Background(), RDSManagerOptions{
+		RDSClient: mockRDS,
+		EC2Client: mockEC2,
+		SSMClient: nil,
+		Region:    "us-east-1",
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error creating manager: %v", err)
+	}
+
+	// Mock DB instances response
+	mockRDS.EXPECT().
+		DescribeDBInstances(gomock.Any(), gomock.Any()).
+		Return(&rds.DescribeDBInstancesOutput{
+			DBInstances: []rdstypes.DBInstance{
+				{
+					DBInstanceIdentifier: aws.String("standalone-db"),
+					DBInstanceStatus:     aws.String("available"),
+					Engine:               aws.String("mysql"),
+					DBClusterIdentifier:  nil, // Standalone instance
+					Endpoint: &rdstypes.Endpoint{
+						Address: aws.String("standalone-db.xyz.us-east-1.rds.amazonaws.com"),
+						Port:    aws.Int32(3306),
+					},
+				},
+			},
+		}, nil).
+		Times(1)
+
+	// Mock DB clusters response
+	mockRDS.EXPECT().
+		DescribeDBClusters(gomock.Any(), gomock.Any()).
+		Return(&rds.DescribeDBClustersOutput{
+			DBClusters: []rdstypes.DBCluster{
+				{
+					DBClusterIdentifier: aws.String("aurora-cluster"),
+					Status:              aws.String("available"),
+					Engine:              aws.String("aurora-mysql"),
+					Port:                aws.Int32(3306),
+					Endpoint:            aws.String("aurora-cluster.cluster-xyz.us-east-1.rds.amazonaws.com"),
+					ReaderEndpoint:      aws.String("aurora-cluster.cluster-ro-xyz.us-east-1.rds.amazonaws.com"),
+				},
+			},
+		}, nil).
+		Times(1)
+
+	instances, err := manager.ListRDSInstances(context.Background())
+
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+
+	// Should have 1 standalone + 2 cluster endpoints = 3 total
+	if len(instances) != 3 {
+		t.Errorf("Expected 3 instances, got %d", len(instances))
+	}
+
+	// Verify we have the right mix of endpoint types
+	endpointTypes := make(map[string]int)
+	for _, instance := range instances {
+		endpointTypes[instance.EndpointType]++
+	}
+
+	if endpointTypes["instance"] != 1 {
+		t.Errorf("Expected 1 standalone instance, got %d", endpointTypes["instance"])
+	}
+	if endpointTypes["cluster-writer"] != 1 {
+		t.Errorf("Expected 1 cluster writer, got %d", endpointTypes["cluster-writer"])
+	}
+	if endpointTypes["cluster-reader"] != 1 {
+		t.Errorf("Expected 1 cluster reader, got %d", endpointTypes["cluster-reader"])
 	}
 }

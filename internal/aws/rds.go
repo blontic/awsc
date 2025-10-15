@@ -19,6 +19,7 @@ import (
 // RDSClient interface for mocking
 type RDSClient interface {
 	DescribeDBInstances(ctx context.Context, params *rds.DescribeDBInstancesInput, optFns ...func(*rds.Options)) (*rds.DescribeDBInstancesOutput, error)
+	DescribeDBClusters(ctx context.Context, params *rds.DescribeDBClustersInput, optFns ...func(*rds.Options)) (*rds.DescribeDBClustersOutput, error)
 }
 
 // EC2Client interface for mocking
@@ -35,10 +36,12 @@ type RDSManager struct {
 }
 
 type RDSInstance struct {
-	Identifier string
-	Endpoint   string
-	Port       int32
-	Engine     string
+	Identifier   string
+	Endpoint     string
+	Port         int32
+	Engine       string
+	EndpointType string // "instance", "cluster-writer", "cluster-reader"
+	ClusterName  string // For cluster endpoints
 }
 
 type BastionHost struct {
@@ -116,7 +119,14 @@ func (r *RDSManager) RunConnect(ctx context.Context, instanceName string, localP
 		// Create instance options for selection
 		instanceOptions := make([]string, len(instances))
 		for i, instance := range instances {
-			instanceOptions[i] = fmt.Sprintf("%s (%s:%d)", instance.Identifier, instance.Engine, instance.Port)
+			switch instance.EndpointType {
+			case "cluster-writer":
+				instanceOptions[i] = fmt.Sprintf("%s (%s:%d) [Writer]", instance.Identifier, instance.Engine, instance.Port)
+			case "cluster-reader":
+				instanceOptions[i] = fmt.Sprintf("%s (%s:%d) [Reader]", instance.Identifier, instance.Engine, instance.Port)
+			default:
+				instanceOptions[i] = fmt.Sprintf("%s (%s:%d)", instance.Identifier, instance.Engine, instance.Port)
+			}
 		}
 
 		// Interactive instance selection
@@ -158,6 +168,26 @@ func (r *RDSManager) RunConnect(ctx context.Context, instanceName string, localP
 }
 
 func (r *RDSManager) ListRDSInstances(ctx context.Context) ([]RDSInstance, error) {
+	var instances []RDSInstance
+
+	// Get standalone DB instances
+	dbInstances, err := r.getDBInstances(ctx)
+	if err != nil {
+		return nil, err
+	}
+	instances = append(instances, dbInstances...)
+
+	// Get Aurora cluster endpoints
+	clusterEndpoints, err := r.getClusterEndpoints(ctx)
+	if err != nil {
+		return nil, err
+	}
+	instances = append(instances, clusterEndpoints...)
+
+	return instances, nil
+}
+
+func (r *RDSManager) getDBInstances(ctx context.Context) ([]RDSInstance, error) {
 	var allDBInstances []rdstypes.DBInstance
 	var marker *string
 
@@ -168,11 +198,9 @@ func (r *RDSManager) ListRDSInstances(ctx context.Context) ([]RDSInstance, error
 		if err != nil {
 			if IsAuthError(err) {
 				if shouldReauth, reAuthErr := PromptForReauth(ctx); shouldReauth && reAuthErr == nil {
-					// Reload all clients with fresh credentials
 					if reloadErr := r.reloadClients(ctx); reloadErr != nil {
 						return nil, reloadErr
 					}
-					// Retry after re-authentication
 					result, err = r.rdsClient.DescribeDBInstances(ctx, &rds.DescribeDBInstancesInput{
 						Marker: marker,
 					})
@@ -189,7 +217,6 @@ func (r *RDSManager) ListRDSInstances(ctx context.Context) ([]RDSInstance, error
 
 		allDBInstances = append(allDBInstances, result.DBInstances...)
 
-		// Check if there are more pages
 		if result.Marker == nil {
 			break
 		}
@@ -198,13 +225,83 @@ func (r *RDSManager) ListRDSInstances(ctx context.Context) ([]RDSInstance, error
 
 	var instances []RDSInstance
 	for _, db := range allDBInstances {
-		if db.DBInstanceStatus != nil && *db.DBInstanceStatus == "available" {
+		if db.DBInstanceStatus != nil && *db.DBInstanceStatus == "available" && db.DBClusterIdentifier == nil {
+			// Only include standalone instances (not part of a cluster)
 			instances = append(instances, RDSInstance{
-				Identifier: *db.DBInstanceIdentifier,
-				Endpoint:   *db.Endpoint.Address,
-				Port:       *db.Endpoint.Port,
-				Engine:     *db.Engine,
+				Identifier:   *db.DBInstanceIdentifier,
+				Endpoint:     *db.Endpoint.Address,
+				Port:         *db.Endpoint.Port,
+				Engine:       *db.Engine,
+				EndpointType: "instance",
 			})
+		}
+	}
+
+	return instances, nil
+}
+
+func (r *RDSManager) getClusterEndpoints(ctx context.Context) ([]RDSInstance, error) {
+	var allClusters []rdstypes.DBCluster
+	var marker *string
+
+	for {
+		result, err := r.rdsClient.DescribeDBClusters(ctx, &rds.DescribeDBClustersInput{
+			Marker: marker,
+		})
+		if err != nil {
+			if IsAuthError(err) {
+				if shouldReauth, reAuthErr := PromptForReauth(ctx); shouldReauth && reAuthErr == nil {
+					if reloadErr := r.reloadClients(ctx); reloadErr != nil {
+						return nil, reloadErr
+					}
+					result, err = r.rdsClient.DescribeDBClusters(ctx, &rds.DescribeDBClustersInput{
+						Marker: marker,
+					})
+					if err != nil {
+						return nil, err
+					}
+				} else {
+					return nil, err
+				}
+			} else {
+				return nil, err
+			}
+		}
+
+		allClusters = append(allClusters, result.DBClusters...)
+
+		if result.Marker == nil {
+			break
+		}
+		marker = result.Marker
+	}
+
+	var instances []RDSInstance
+	for _, cluster := range allClusters {
+		if cluster.Status != nil && *cluster.Status == "available" {
+			// Add cluster writer endpoint
+			if cluster.Endpoint != nil {
+				instances = append(instances, RDSInstance{
+					Identifier:   *cluster.DBClusterIdentifier + " (writer)",
+					Endpoint:     *cluster.Endpoint,
+					Port:         *cluster.Port,
+					Engine:       *cluster.Engine,
+					EndpointType: "cluster-writer",
+					ClusterName:  *cluster.DBClusterIdentifier,
+				})
+			}
+
+			// Add cluster reader endpoint
+			if cluster.ReaderEndpoint != nil {
+				instances = append(instances, RDSInstance{
+					Identifier:   *cluster.DBClusterIdentifier + " (reader)",
+					Endpoint:     *cluster.ReaderEndpoint,
+					Port:         *cluster.Port,
+					Engine:       *cluster.Engine,
+					EndpointType: "cluster-reader",
+					ClusterName:  *cluster.DBClusterIdentifier,
+				})
+			}
 		}
 	}
 
@@ -213,7 +310,7 @@ func (r *RDSManager) ListRDSInstances(ctx context.Context) ([]RDSInstance, error
 
 func (r *RDSManager) FindBastionHosts(ctx context.Context, rdsInstance RDSInstance) ([]BastionHost, error) {
 	// Get RDS security groups
-	rdsSecurityGroups, err := r.getRDSSecurityGroups(ctx, rdsInstance.Identifier)
+	rdsSecurityGroups, err := r.getRDSSecurityGroups(ctx, rdsInstance)
 	if err != nil {
 		return nil, err
 	}
@@ -329,42 +426,76 @@ func (r *RDSManager) StartPortForwarding(ctx context.Context, bastionId, rdsEndp
 	return pf.StartPortForwardingToRemoteHost(ctx, bastionId, rdsEndpoint, int(rdsPort), int(localPort))
 }
 
-func (r *RDSManager) getRDSSecurityGroups(ctx context.Context, dbIdentifier string) ([]string, error) {
-	result, err := r.rdsClient.DescribeDBInstances(ctx, &rds.DescribeDBInstancesInput{
-		DBInstanceIdentifier: aws.String(dbIdentifier),
-	})
-	if err != nil {
-		if IsAuthError(err) {
-			if shouldReauth, reAuthErr := PromptForReauth(ctx); shouldReauth && reAuthErr == nil {
-				// Reload all clients with fresh credentials
-				if reloadErr := r.reloadClients(ctx); reloadErr != nil {
-					return nil, reloadErr
-				}
-				// Retry after re-authentication
-				result, err = r.rdsClient.DescribeDBInstances(ctx, &rds.DescribeDBInstancesInput{
-					DBInstanceIdentifier: aws.String(dbIdentifier),
-				})
-				if err != nil {
+func (r *RDSManager) getRDSSecurityGroups(ctx context.Context, rdsInstance RDSInstance) ([]string, error) {
+	if rdsInstance.EndpointType == "cluster-writer" || rdsInstance.EndpointType == "cluster-reader" {
+		// Get security groups from cluster
+		result, err := r.rdsClient.DescribeDBClusters(ctx, &rds.DescribeDBClustersInput{
+			DBClusterIdentifier: aws.String(rdsInstance.ClusterName),
+		})
+		if err != nil {
+			if IsAuthError(err) {
+				if shouldReauth, reAuthErr := PromptForReauth(ctx); shouldReauth && reAuthErr == nil {
+					if reloadErr := r.reloadClients(ctx); reloadErr != nil {
+						return nil, reloadErr
+					}
+					result, err = r.rdsClient.DescribeDBClusters(ctx, &rds.DescribeDBClustersInput{
+						DBClusterIdentifier: aws.String(rdsInstance.ClusterName),
+					})
+					if err != nil {
+						return nil, err
+					}
+				} else {
 					return nil, err
 				}
 			} else {
 				return nil, err
 			}
-		} else {
-			return nil, err
 		}
-	}
 
-	if len(result.DBInstances) == 0 {
-		return nil, fmt.Errorf("RDS instance not found")
-	}
+		if len(result.DBClusters) == 0 {
+			return nil, fmt.Errorf("RDS cluster not found")
+		}
 
-	var sgIds []string
-	for _, sg := range result.DBInstances[0].VpcSecurityGroups {
-		sgIds = append(sgIds, *sg.VpcSecurityGroupId)
-	}
+		var sgIds []string
+		for _, sg := range result.DBClusters[0].VpcSecurityGroups {
+			sgIds = append(sgIds, *sg.VpcSecurityGroupId)
+		}
+		return sgIds, nil
+	} else {
+		// Get security groups from instance
+		result, err := r.rdsClient.DescribeDBInstances(ctx, &rds.DescribeDBInstancesInput{
+			DBInstanceIdentifier: aws.String(rdsInstance.Identifier),
+		})
+		if err != nil {
+			if IsAuthError(err) {
+				if shouldReauth, reAuthErr := PromptForReauth(ctx); shouldReauth && reAuthErr == nil {
+					if reloadErr := r.reloadClients(ctx); reloadErr != nil {
+						return nil, reloadErr
+					}
+					result, err = r.rdsClient.DescribeDBInstances(ctx, &rds.DescribeDBInstancesInput{
+						DBInstanceIdentifier: aws.String(rdsInstance.Identifier),
+					})
+					if err != nil {
+						return nil, err
+					}
+				} else {
+					return nil, err
+				}
+			} else {
+				return nil, err
+			}
+		}
 
-	return sgIds, nil
+		if len(result.DBInstances) == 0 {
+			return nil, fmt.Errorf("RDS instance not found")
+		}
+
+		var sgIds []string
+		for _, sg := range result.DBInstances[0].VpcSecurityGroups {
+			sgIds = append(sgIds, *sg.VpcSecurityGroupId)
+		}
+		return sgIds, nil
+	}
 }
 
 func (r *RDSManager) canConnectToRDS(ctx context.Context, ec2SecurityGroups []types.GroupIdentifier, rdsSecurityGroups []string, rdsPort int32) bool {
