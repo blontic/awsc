@@ -503,3 +503,119 @@ func TestEC2Manager_RunRDP_WindowsFiltering(t *testing.T) {
 		}
 	}
 }
+func TestEC2Manager_RunConnect_WithStoppedInstances(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockEC2 := mocks.NewMockEC2Client(ctrl)
+	mockSSM := mocks.NewMockSSMClient(ctrl)
+
+	manager, err := NewEC2Manager(context.Background(), EC2ManagerOptions{
+		EC2Client: mockEC2,
+		SSMClient: mockSSM,
+		Region:    "us-east-1",
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error creating manager: %v", err)
+	}
+
+	// Mock EC2 instances call with stopped instances
+	mockEC2.EXPECT().
+		DescribeInstances(gomock.Any(), gomock.Any()).
+		Return(&ec2.DescribeInstancesOutput{
+			Reservations: []types.Reservation{
+				{
+					Instances: []types.Instance{
+						{
+							InstanceId:   aws.String("i-stopped-1"),
+							InstanceType: "t3.micro",
+							State: &types.InstanceState{
+								Name: "stopped",
+							},
+							Tags: []types.Tag{
+								{Key: aws.String("Name"), Value: aws.String("web-server")},
+							},
+						},
+						{
+							InstanceId:   aws.String("i-stopped-2"),
+							InstanceType: "t3.small",
+							State: &types.InstanceState{
+								Name: "stopped",
+							},
+							Tags: []types.Tag{
+								{Key: aws.String("Name"), Value: aws.String("api-server")},
+							},
+						},
+					},
+				},
+			},
+		}, nil).
+		Times(2) // Called twice - once for initial list, once for final list
+
+	err = manager.RunConnect(context.Background(), "")
+	if err == nil {
+		t.Error("Expected error when only stopped instances found")
+	}
+	if !strings.Contains(err.Error(), "no running EC2 instances with SSM agent found") {
+		t.Errorf("Expected error about stopped instances, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "2 stopped instances available") {
+		t.Errorf("Expected error to mention stopped instances count, got: %v", err)
+	}
+}
+
+func TestEC2Manager_RunConnect_RunningButNoSSM(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockEC2 := mocks.NewMockEC2Client(ctrl)
+	mockSSM := mocks.NewMockSSMClient(ctrl)
+
+	manager, err := NewEC2Manager(context.Background(), EC2ManagerOptions{
+		EC2Client: mockEC2,
+		SSMClient: mockSSM,
+		Region:    "us-east-1",
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error creating manager: %v", err)
+	}
+
+	// Mock EC2 instances call with running instances
+	mockEC2.EXPECT().
+		DescribeInstances(gomock.Any(), gomock.Any()).
+		Return(&ec2.DescribeInstancesOutput{
+			Reservations: []types.Reservation{
+				{
+					Instances: []types.Instance{
+						{
+							InstanceId:   aws.String("i-running-1"),
+							InstanceType: "t3.micro",
+							State: &types.InstanceState{
+								Name: "running",
+							},
+							Tags: []types.Tag{
+								{Key: aws.String("Name"), Value: aws.String("web-server")},
+							},
+						},
+					},
+				},
+			},
+		}, nil).
+		Times(2) // Called twice - once for initial list, once for final list
+
+	// Mock SSM call returning no instances (no SSM agent)
+	mockSSM.EXPECT().
+		DescribeInstanceInformation(gomock.Any(), gomock.Any()).
+		Return(&ssm.DescribeInstanceInformationOutput{
+			InstanceInformationList: []ssmtypes.InstanceInformation{},
+		}, nil).
+		Times(2) // Called twice for the same instance
+
+	err = manager.RunConnect(context.Background(), "")
+	if err == nil {
+		t.Error("Expected error when running instances have no SSM agent")
+	}
+	if !strings.Contains(err.Error(), "no running EC2 instances with SSM agent found") {
+		t.Errorf("Expected error about no SSM agent, got: %v", err)
+	}
+}

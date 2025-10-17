@@ -619,11 +619,14 @@ func TestRDSManager_FindBastionHosts_EmptyResponse(t *testing.T) {
 		Times(1)
 
 	bastions, err := manager.FindBastionHosts(context.Background(), rdsInstance)
-	if err != nil {
-		t.Errorf("Unexpected error: %v", err)
+	if err == nil {
+		t.Error("Expected error when no running instances found")
 	}
 	if len(bastions) != 0 {
 		t.Errorf("Expected 0 bastions, got %d", len(bastions))
+	}
+	if !strings.Contains(err.Error(), "no running EC2 instances found") {
+		t.Errorf("Expected error about no running instances, got: %v", err)
 	}
 }
 
@@ -905,5 +908,91 @@ func TestRDSManager_ListRDSInstances_WithClusters(t *testing.T) {
 	}
 	if endpointTypes["cluster-reader"] != 1 {
 		t.Errorf("Expected 1 cluster reader, got %d", endpointTypes["cluster-reader"])
+	}
+}
+func TestRDSManager_FindBastionHosts_WithStoppedInstances(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockRDS := mocks.NewMockRDSClient(ctrl)
+	mockEC2 := mocks.NewMockEC2Client(ctrl)
+
+	manager, err := NewRDSManager(context.Background(), RDSManagerOptions{
+		RDSClient: mockRDS,
+		EC2Client: mockEC2,
+		SSMClient: nil,
+		Region:    "us-east-1",
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error creating manager: %v", err)
+	}
+
+	rdsInstance := RDSInstance{
+		Identifier: "test-db",
+		Port:       3306,
+	}
+
+	// Mock RDS security groups call
+	mockRDS.EXPECT().
+		DescribeDBInstances(gomock.Any(), &rds.DescribeDBInstancesInput{
+			DBInstanceIdentifier: aws.String("test-db"),
+		}).
+		Return(&rds.DescribeDBInstancesOutput{
+			DBInstances: []rdstypes.DBInstance{
+				{
+					VpcSecurityGroups: []rdstypes.VpcSecurityGroupMembership{
+						{VpcSecurityGroupId: aws.String("sg-rds-123")},
+					},
+				},
+			},
+		}, nil).
+		Times(1)
+
+	// Mock EC2 instances call with stopped instances
+	mockEC2.EXPECT().
+		DescribeInstances(gomock.Any(), gomock.Any()).
+		Return(&ec2.DescribeInstancesOutput{
+			Reservations: []types.Reservation{
+				{
+					Instances: []types.Instance{
+						{
+							InstanceId: aws.String("i-stopped-1"),
+							State: &types.InstanceState{
+								Name: "stopped",
+							},
+							Tags: []types.Tag{
+								{Key: aws.String("Name"), Value: aws.String("web-server")},
+							},
+							SecurityGroups: []types.GroupIdentifier{
+								{GroupId: aws.String("sg-ec2-456")},
+							},
+						},
+						{
+							InstanceId: aws.String("i-stopped-2"),
+							State: &types.InstanceState{
+								Name: "stopped",
+							},
+							Tags: []types.Tag{
+								{Key: aws.String("Name"), Value: aws.String("bastion-host")},
+							},
+							SecurityGroups: []types.GroupIdentifier{
+								{GroupId: aws.String("sg-ec2-789")},
+							},
+						},
+					},
+				},
+			},
+		}, nil).
+		Times(1)
+
+	bastions, err := manager.FindBastionHosts(context.Background(), rdsInstance)
+	if err == nil {
+		t.Error("Expected error when only stopped instances found")
+	}
+	if len(bastions) != 0 {
+		t.Errorf("Expected 0 bastions (all stopped), got %d", len(bastions))
+	}
+	if !strings.Contains(err.Error(), "no running bastion hosts found") {
+		t.Errorf("Expected error about stopped instances, got: %v", err)
 	}
 }

@@ -11,14 +11,17 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.44.0
 	github.com/aws/aws-sdk-go-v2/service/sso v1.18.5
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.21.5
-	github.com/aws/aws-sdk-go-v2/service/sts v1.26.5
+	github.com/aws/aws-sdk-go-v2/service/sts v1.26.5 // indirect
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/spf13/cobra v1.8.0
 	github.com/spf13/viper v1.18.2
 	go.uber.org/mock v0.6.0
 )
 
-require github.com/charmbracelet/lipgloss v1.1.0
+require (
+	github.com/aws/aws-sdk-go-v2/service/opensearch v1.52.5
+	github.com/charmbracelet/lipgloss v1.1.0
+)
 
 require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.16.12 // indirect

@@ -139,15 +139,15 @@ func (r *RDSManager) RunConnect(ctx context.Context, instanceName string, localP
 		}
 
 		selectedInstance = instances[selectedIndex]
-		fmt.Printf("Selected: %s\n", selectedInstance.Identifier)
+		fmt.Printf("✓ Selected: %s\n", selectedInstance.Identifier)
 	} else {
-		fmt.Printf("Selected: %s\n", selectedInstance.Identifier)
+		fmt.Printf("✓ Selected: %s\n", selectedInstance.Identifier)
 	}
 
 	// Find bastion hosts
 	bastions, err := r.FindBastionHosts(ctx, selectedInstance)
 	if err != nil {
-		return fmt.Errorf("error finding bastion hosts: %v", err)
+		return err
 	}
 
 	if len(bastions) == 0 {
@@ -317,18 +317,12 @@ func (r *RDSManager) FindBastionHosts(ctx context.Context, rdsInstance RDSInstan
 
 	debug.Printf("RDS %s security groups: %v\n", rdsInstance.Identifier, rdsSecurityGroups)
 
-	// Find EC2 instances that can connect to RDS
+	// Find all EC2 instances (running and stopped) that can connect to RDS
 	var allReservations []types.Reservation
 	var nextToken *string
 
 	for {
 		result, err := r.ec2Client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
-			Filters: []types.Filter{
-				{
-					Name:   aws.String("instance-state-name"),
-					Values: []string{"running"},
-				},
-			},
 			NextToken: nextToken,
 		})
 		if err != nil {
@@ -340,12 +334,6 @@ func (r *RDSManager) FindBastionHosts(ctx context.Context, rdsInstance RDSInstan
 					}
 					// Retry after re-authentication
 					result, err = r.ec2Client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
-						Filters: []types.Filter{
-							{
-								Name:   aws.String("instance-state-name"),
-								Values: []string{"running"},
-							},
-						},
 						NextToken: nextToken,
 					})
 					if err != nil {
@@ -368,16 +356,35 @@ func (r *RDSManager) FindBastionHosts(ctx context.Context, rdsInstance RDSInstan
 		nextToken = result.NextToken
 	}
 
-	// Count total instances across all reservations
+	// Count and categorize instances
 	totalInstances := 0
+	runningInstances := 0
+	stoppedInstances := 0
+	var stoppedInstanceNames []string
+
 	for _, reservation := range allReservations {
 		totalInstances += len(reservation.Instances)
+		for _, instance := range reservation.Instances {
+			if instance.State != nil {
+				if instance.State.Name == "running" {
+					runningInstances++
+				} else if instance.State.Name == "stopped" {
+					stoppedInstances++
+					stoppedInstanceNames = append(stoppedInstanceNames, r.getInstanceName(instance.Tags))
+				}
+			}
+		}
 	}
-	debug.Printf("Found %d running EC2 instances\n", totalInstances)
+	debug.Printf("Found %d total EC2 instances (%d running, %d stopped)\n", totalInstances, runningInstances, stoppedInstances)
 
 	var bastions []BastionHost
 	for _, reservation := range allReservations {
 		for _, instance := range reservation.Instances {
+			// Only check running instances for bastion capability
+			if instance.State == nil || instance.State.Name != "running" {
+				continue
+			}
+
 			name := r.getInstanceName(instance.Tags)
 			ec2SgIds := r.getSecurityGroupIds(instance.SecurityGroups)
 			debug.Printf("Checking instance %s (%s) with security groups: %v\n", name, *instance.InstanceId, ec2SgIds)
@@ -396,15 +403,30 @@ func (r *RDSManager) FindBastionHosts(ctx context.Context, rdsInstance RDSInstan
 	}
 
 	if len(bastions) == 0 {
-		if totalInstances == 0 {
-			fmt.Printf("\nNo running EC2 instances found in region %s.\n", r.region)
+		// Show stopped instances if any exist
+		if stoppedInstances > 0 {
+			fmt.Printf("\nFound %d stopped EC2 instance(s):\n", stoppedInstances)
+			for _, name := range stoppedInstanceNames {
+				fmt.Printf("- %s (stopped)\n", name)
+			}
+			fmt.Printf("\n")
+		}
+
+		if runningInstances == 0 {
+			fmt.Printf("No running EC2 instances found in region %s.\n", r.region)
 			fmt.Printf("To use RDS port forwarding, you need a running EC2 instance with:\n")
 			fmt.Printf("- SSM agent installed and configured\n")
 			fmt.Printf("- Network access to the RDS instance\n")
+			if stoppedInstances > 0 {
+				fmt.Printf("\nYou can start one of the stopped instances above and try again.\n")
+				return nil, fmt.Errorf("no running bastion hosts found - %d stopped instances available", stoppedInstances)
+			}
 			fmt.Printf("\nAlternatively, you can connect directly if your RDS is publicly accessible.\n")
+			return nil, fmt.Errorf("no running EC2 instances found in region %s", r.region)
 		} else {
-			fmt.Printf("\nFound %d EC2 instances but none can connect to RDS %s.\n", totalInstances, rdsInstance.Identifier)
+			fmt.Printf("Found %d running EC2 instances but none can connect to RDS %s.\n", runningInstances, rdsInstance.Identifier)
 			fmt.Printf("This usually means the security groups don't allow the connection.\n")
+			return nil, fmt.Errorf("no suitable bastion hosts found - security groups may not allow connection")
 		}
 	}
 
