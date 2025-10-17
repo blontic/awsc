@@ -8,12 +8,9 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/sso/types"
 	"github.com/spf13/viper"
 )
 
@@ -127,115 +124,6 @@ func TestContains(t *testing.T) {
 				t.Errorf("Expected %v, got %v", tt.expected, result)
 			}
 		})
-	}
-}
-
-func TestSetupCredentials(t *testing.T) {
-	// Create temporary directory for test
-	tempDir := t.TempDir()
-
-	// Override home directory for test
-	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
-
-	// Test credentials
-	creds := &types.RoleCredentials{
-		AccessKeyId:     aws.String("AKIATEST123456789"),
-		SecretAccessKey: aws.String("test-secret-key"),
-		SessionToken:    aws.String("test-session-token"),
-	}
-
-	err := SetupCredentials("123456789012", "TestRole", creds)
-	if err != nil {
-		t.Fatalf("SetupCredentials failed: %v", err)
-	}
-
-	// Verify config file was created
-	configFile := filepath.Join(tempDir, ".aws", "config")
-	if _, err := os.Stat(configFile); os.IsNotExist(err) {
-		t.Fatal("Config file was not created")
-	}
-
-	// Read and verify config content
-	content, err := os.ReadFile(configFile)
-	if err != nil {
-		t.Fatalf("Failed to read config file: %v", err)
-	}
-
-	configStr := string(content)
-	if !strings.Contains(configStr, "[profile awsc]") {
-		t.Error("Config file does not contain awsc profile")
-	}
-	if !strings.Contains(configStr, "AKIATEST123456789") {
-		t.Error("Config file does not contain access key")
-	}
-	if !strings.Contains(configStr, "test-secret-key") {
-		t.Error("Config file does not contain secret key")
-	}
-	if !strings.Contains(configStr, "test-session-token") {
-		t.Error("Config file does not contain session token")
-	}
-}
-
-func TestWriteAWSProfile(t *testing.T) {
-	// Create temporary directory for test
-	tempDir := t.TempDir()
-
-	// Override home directory for test
-	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
-
-	// Test credentials
-	creds := &types.RoleCredentials{
-		AccessKeyId:     aws.String("AKIATEST123456789"),
-		SecretAccessKey: aws.String("test-secret-key"),
-		SessionToken:    aws.String("test-session-token"),
-	}
-
-	// Test writing new profile
-	err := writeAWSProfile("test-profile", "123456789012", "TestRole", creds)
-	if err != nil {
-		t.Fatalf("writeAWSProfile failed: %v", err)
-	}
-
-	// Verify config file content
-	configFile := filepath.Join(tempDir, ".aws", "config")
-	content, err := os.ReadFile(configFile)
-	if err != nil {
-		t.Fatalf("Failed to read config file: %v", err)
-	}
-
-	configStr := string(content)
-	if !strings.Contains(configStr, "[profile test-profile]") {
-		t.Error("Config file does not contain test-profile")
-	}
-
-	// Test overwriting existing profile
-	newCreds := &types.RoleCredentials{
-		AccessKeyId:     aws.String("AKIANEW123456789"),
-		SecretAccessKey: aws.String("new-secret-key"),
-		SessionToken:    aws.String("new-session-token"),
-	}
-
-	err = writeAWSProfile("test-profile", "123456789012", "NewRole", newCreds)
-	if err != nil {
-		t.Fatalf("writeAWSProfile overwrite failed: %v", err)
-	}
-
-	// Verify old credentials are replaced
-	content, err = os.ReadFile(configFile)
-	if err != nil {
-		t.Fatalf("Failed to read config file: %v", err)
-	}
-
-	configStr = string(content)
-	if strings.Contains(configStr, "AKIATEST123456789") {
-		t.Error("Old credentials still present in config file")
-	}
-	if !strings.Contains(configStr, "AKIANEW123456789") {
-		t.Error("New credentials not found in config file")
 	}
 }
 
@@ -424,30 +312,6 @@ func TestIsRetryableError(t *testing.T) {
 				t.Errorf("Expected %v, got %v for error: %v", tt.expected, result, tt.err)
 			}
 		})
-	}
-}
-
-func TestCheckCredentialsValid(t *testing.T) {
-	ctx := context.Background()
-
-	// This will likely fail without valid AWS credentials
-	err := CheckCredentialsValid(ctx)
-	if err != nil {
-		t.Logf("CheckCredentialsValid failed as expected in test environment: %v", err)
-	} else {
-		t.Log("CheckCredentialsValid succeeded unexpectedly")
-	}
-}
-
-func TestCheckAWSSession(t *testing.T) {
-	ctx := context.Background()
-
-	// This will likely fail without valid AWS credentials
-	err := CheckAWSSession(ctx)
-	if err != nil {
-		t.Logf("CheckAWSSession failed as expected in test environment: %v", err)
-	} else {
-		t.Log("CheckAWSSession succeeded unexpectedly")
 	}
 }
 

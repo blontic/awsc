@@ -24,14 +24,18 @@
 ## Error Handling
 - Return errors, don't exit directly in packages
 - Use `fmt.Errorf()` for error wrapping
-- Exit with `os.Exit(1)` only in cmd/ files
+- **MANDATORY**: Exit with `os.Exit(1)` in cmd/ files when operations fail
 - Print errors to stderr, not stdout
 - **NO AWS CLI fallbacks**: When operations fail, return clear errors without suggesting manual AWS CLI commands
 - **Self-contained errors**: Tool should work independently without requiring AWS CLI
+- **Exit Code Pattern**: All cmd/ files must call `os.Exit(1)` on any error to ensure proper exit codes for scripting
 
 ## Credential Handling Pattern
-- **Try AWS operations directly** - let SDK handle credential loading
-- **Handle credential errors gracefully** - offer automatic re-authentication
+- **NO pre-checking**: Never check credentials before operations
+- **Try operations directly** - let SDK handle credential loading
+- **Handle auth errors reactively**: Use `IsAuthError()` to detect failures
+- **Auto-login on "no active session"**: `PromptForReauth()` auto-triggers login
+- **Manager creation errors**: Commands must handle auth errors at manager creation (see core-architecture.md)
 - **MANDATORY Auth Error Pattern**:
   ```go
   if err != nil {
@@ -55,6 +59,7 @@
 - **Global flags**: `--region`, `--config`, and `--verbose` available on all commands
 - **Command pattern**: ALL commands must support direct parameter access with interactive fallback
 - **Parameter naming**: Use `--name` for primary resource identifier, `--id` for alternatives
+- **Account switching**: Use `--switch-account, -s` flag pattern for all resource commands
 - **Selection pattern**: All commands use "Selected: [item]" format after user selection
 - **Error format**: "Error [action]: [details]" for all error messages
 - **Fallback behavior**: When direct access fails, show error then interactive list
@@ -85,6 +90,9 @@
 - [ ] **Client reload**: MANDATORY `reloadClient()` method after re-authentication
 - [ ] **Pagination support**: Handle NextToken/Marker for all list operations
 - [ ] **Empty resource handling**: Show "No [resources] found" message
+- [ ] **Switch account flag**: Add `--switch-account, -s` flag for account switching
+- [ ] **Exit codes**: MANDATORY `os.Exit(1)` on all errors in cmd/ files
+- [ ] **Mock generation**: Update Makefile mocks target to include new client interfaces
 - [ ] **Documentation**: Update README with both interactive and direct usage examples
 
 ## UI/UX Standards

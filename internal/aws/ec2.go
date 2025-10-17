@@ -110,17 +110,50 @@ func (e *EC2Manager) RunConnect(ctx context.Context, instanceId string) error {
 		return fmt.Errorf("no EC2 instances found")
 	}
 
-	// Check if any instances are selectable
+	// Check if any instances are selectable and categorize them
 	hasSelectable := false
+	runningInstances := 0
+	stoppedInstances := 0
+	var stoppedInstanceNames []string
+
 	for _, instance := range instances {
 		if instance.IsSelectable {
 			hasSelectable = true
-			break
+		}
+		if instance.State == "running" {
+			runningInstances++
+		} else if instance.State == "stopped" {
+			stoppedInstances++
+			stoppedInstanceNames = append(stoppedInstanceNames, instance.Name)
 		}
 	}
 
 	if !hasSelectable {
-		return fmt.Errorf("no running EC2 instances with SSM agent found - you may need to start an instance")
+		// Show stopped instances if any exist
+		if stoppedInstances > 0 {
+			fmt.Printf("\nFound %d stopped EC2 instance(s):\n", stoppedInstances)
+			for _, name := range stoppedInstanceNames {
+				fmt.Printf("- %s (stopped)\n", name)
+			}
+			fmt.Printf("\n")
+		}
+
+		if runningInstances == 0 {
+			fmt.Printf("No running EC2 instances found in region %s.\n", e.region)
+			fmt.Printf("To use EC2 sessions, you need a running EC2 instance with:\n")
+			fmt.Printf("- SSM agent installed and configured\n")
+			fmt.Printf("- Proper IAM permissions for SSM\n")
+			if stoppedInstances > 0 {
+				return fmt.Errorf("no running EC2 instances with SSM agent found - %d stopped instances available", stoppedInstances)
+			}
+			return fmt.Errorf("no running EC2 instances found in region %s", e.region)
+		} else {
+			fmt.Printf("Found %d running EC2 instances but none have SSM agent configured.\n", runningInstances)
+			fmt.Printf("Please ensure your instances have:\n")
+			fmt.Printf("- SSM agent installed and running\n")
+			fmt.Printf("- Proper IAM role with SSM permissions\n")
+			return fmt.Errorf("no running EC2 instances with SSM agent found")
+		}
 	}
 
 	// Select instance
@@ -228,17 +261,17 @@ func (e *EC2Manager) ListAllInstances(ctx context.Context) ([]EC2Instance, error
 
 	var instances []EC2Instance
 	for _, reservation := range allReservations {
-		for _, instance := range reservation.Instances {
-			isRunning := string(instance.State.Name) == "running"
+		for _, inst := range reservation.Instances {
+			isRunning := string(inst.State.Name) == "running"
 			// Only check SSM for running instances to avoid unnecessary API calls
-			hasSSM := isRunning && e.hasSSMAgent(ctx, *instance.InstanceId)
+			hasSSM := isRunning && e.hasSSMAgent(ctx, *inst.InstanceId)
 
 			instances = append(instances, EC2Instance{
-				InstanceId:   *instance.InstanceId,
-				Name:         e.getInstanceName(instance.Tags),
-				InstanceType: string(instance.InstanceType),
-				State:        string(instance.State.Name),
-				Platform:     e.getPlatform(instance),
+				InstanceId:   *inst.InstanceId,
+				Name:         e.getInstanceName(inst.Tags),
+				InstanceType: string(inst.InstanceType),
+				State:        string(inst.State.Name),
+				Platform:     e.getPlatform(inst),
 				IsSelectable: hasSSM, // Only running instances with SSM are selectable
 			})
 		}
@@ -394,6 +427,6 @@ func (e *EC2Manager) selectInstance(title string, instances []EC2Instance) (*EC2
 	}
 
 	selectedInstance := instances[selectedIndex]
-	fmt.Printf("Selected: %s\n", selectedInstance.Name)
+	fmt.Printf("✓ Selected: %s\n", selectedInstance.Name)
 	return &selectedInstance, nil
 }

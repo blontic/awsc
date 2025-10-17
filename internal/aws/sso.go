@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -209,7 +210,7 @@ func (s *SSOManager) handleAccountRoleSelection(ctx context.Context, accessToken
 		}
 		selectedAccount = accounts[selectedAccountIndex]
 	}
-	fmt.Printf("Selected: %s\n", *selectedAccount.AccountName)
+	fmt.Printf("✓ Selected: %s\n", *selectedAccount.AccountName)
 
 	// List roles
 	roles, err := s.ListRoles(ctx, accessToken, *selectedAccount.AccountId)
@@ -264,7 +265,7 @@ func (s *SSOManager) handleAccountRoleSelection(ctx context.Context, accessToken
 		}
 		selectedRole = roles[selectedRoleIndex]
 	}
-	fmt.Printf("Selected: %s\n", *selectedRole.RoleName)
+	fmt.Printf("✓ Selected: %s\n", *selectedRole.RoleName)
 
 	// Get credentials (AWS SSO automatically uses max duration for the role)
 	creds, err := s.GetRoleCredentials(ctx, accessToken, *selectedAccount.AccountId, *selectedRole.RoleName)
@@ -272,13 +273,23 @@ func (s *SSOManager) handleAccountRoleSelection(ctx context.Context, accessToken
 		return fmt.Errorf("error getting role credentials: %v", err)
 	}
 
-	// Set up credentials
-	err = SetupCredentials(*selectedAccount.AccountId, *selectedRole.RoleName, creds)
+	// Write profile to ~/.aws/config
+	profileName, err := awscconfig.WriteProfile(*selectedAccount.AccountName, *selectedAccount.AccountId, *selectedRole.RoleName, creds)
 	if err != nil {
-		return fmt.Errorf("error setting up credentials: %v", err)
+		return fmt.Errorf("error writing profile: %v", err)
 	}
 
-	fmt.Printf("Assumed role %s in account %s\n", *selectedRole.RoleName, *selectedAccount.AccountName)
-	fmt.Printf("Credentials written to AWS config profile 'awsc'\n")
+	// Save session for current shell
+	ppid := os.Getppid()
+	if err := awscconfig.SaveSession(ppid, profileName, *selectedAccount.AccountId, *selectedAccount.AccountName, *selectedRole.RoleName); err != nil {
+		return fmt.Errorf("error saving session: %v", err)
+	}
+
+	// Cleanup stale sessions (best effort, ignore errors)
+	_ = awscconfig.CleanupStaleSessions()
+
+	fmt.Printf("\nSuccessfully authenticated to %s (%s) as %s\n", *selectedAccount.AccountName, *selectedAccount.AccountId, *selectedRole.RoleName)
+	fmt.Printf("Profile: %s\n", profileName)
+	fmt.Printf("Use with AWS CLI: aws <command> --profile %s\n", profileName)
 	return nil
 }

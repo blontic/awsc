@@ -133,12 +133,12 @@ func InitializeConfig() error {
 	viper.Set("sso.region", ssoRegion)
 	viper.Set("default_region", defaultRegion)
 
-	// Write config file
+	// Write config file with secure permissions
 	if err := viper.WriteConfigAs(GetConfigPath()); err != nil {
 		return fmt.Errorf("failed to write config file: %v", err)
 	}
 
-	// Set secure permissions on config file
+	// Ensure secure permissions on config file
 	if err := os.Chmod(GetConfigPath(), 0600); err != nil {
 		return fmt.Errorf("failed to set config file permissions: %v", err)
 	}

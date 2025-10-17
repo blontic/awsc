@@ -6,7 +6,19 @@
 - **NO AWS CLI dependencies** - tool must work independently without AWS CLI installed
 - **NO fallback commands** - when operations fail, return clear errors without suggesting manual AWS CLI commands
 - **External dependency**: session-manager-plugin required for SSM operations only
-- Must work cross-platform (Windows, macOS, Linux)
+- Must work cross-platform (macOS and Linux only - Windows users should use WSL)
+
+## Multi-Profile Support
+
+- **Profile Naming**: `awsc-{accountName}` format stored in `~/.aws/config`
+- **Session Tracking**: PPID-based sessions in `~/.awsc/sessions/session-{ppid}.json`
+- **Hybrid Selection Priority**:
+  1. `AWSC_PROFILE` environment variable (explicit override)
+  2. PPID session file (automatic per-terminal)
+  3. Return "no active session" error
+- **Auto-Login**: All commands detect "no active session" and auto-trigger login
+- **Platform**: macOS and Linux only (PPID tracking requires Unix-like systems)
+- **Profile Manager**: Located in `internal/config/profile.go` (local state management)
 
 ## Configuration Management
 
@@ -39,6 +51,72 @@
 - Test usage: `NewManager(ctx, ManagerOptions{Client: mockClient, Region: "region"})`
 - Initialize with context and AWS config using `LoadAWSConfigWithProfile()`
 - Include all required service clients in manager (e.g., RDSManager has rdsClient, ec2Client, ssmClient)
+
+### Auth Error Handling at Manager Creation
+
+Commands must handle "no active session" errors when creating managers:
+
+```go
+manager, err := aws.NewManager(ctx)
+if err != nil {
+    if aws.IsAuthError(err) {
+        shouldReauth, reAuthErr := aws.PromptForReauth(ctx)
+        if reAuthErr != nil {
+            fmt.Printf("Error during re-authentication: %v\n", reAuthErr)
+            os.Exit(1)
+        }
+        if !shouldReauth {
+            fmt.Printf("Authentication cancelled\n")
+            os.Exit(1)
+        }
+        // Retry creating manager after successful login
+        manager, err = aws.NewManager(ctx)
+        if err != nil {
+            fmt.Printf("Error creating manager after re-authentication: %v\n", err)
+            os.Exit(1)
+        }
+    } else {
+        fmt.Printf("Error creating manager: %v\n", err)
+        os.Exit(1)
+    }
+}
+```
+
+**Auth errors detected:**
+- "no active session" - No PPID session or AWSC_PROFILE set
+- "failed to get shared config profile" - Profile missing from ~/.aws/config
+- "ExpiredToken", "InvalidToken" - Credentials expired
+- "failed to refresh cached credentials" - Token refresh failed
+- Other AWS credential errors
+
+**Auto-recovery:** All auth errors trigger automatic re-authentication flow
+
+### Auth Error Handling During Operations
+
+Managers must handle auth errors during AWS operations:
+
+```go
+result, err := m.client.Operation(ctx, input)
+if err != nil {
+    if IsAuthError(err) {
+        if shouldReauth, reAuthErr := PromptForReauth(ctx); shouldReauth && reAuthErr == nil {
+            // MANDATORY: Reload clients with fresh credentials
+            if reloadErr := m.reloadClients(ctx); reloadErr != nil {
+                return reloadErr
+            }
+            // Retry the operation
+            result, err = m.client.Operation(ctx, input)
+            if err != nil {
+                return err
+            }
+        } else {
+            return err
+        }
+    } else {
+        return err
+    }
+}
+```
 
 ## AWS Operations & Pagination
 

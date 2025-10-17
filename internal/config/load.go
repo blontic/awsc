@@ -2,7 +2,8 @@ package config
 
 import (
 	"context"
-	"strings"
+	"fmt"
+	"os"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -10,6 +11,7 @@ import (
 )
 
 // LoadAWSConfig loads AWS config with region settings (no profile)
+// This is used for SSO operations which don't need credentials
 func LoadAWSConfig(ctx context.Context) (aws.Config, error) {
 	// Use region override if provided, otherwise use SSO region from config
 	region := viper.GetString("default_region")
@@ -17,38 +19,50 @@ func LoadAWSConfig(ctx context.Context) (aws.Config, error) {
 		region = viper.GetString("sso.region")
 	}
 
-	if region != "" {
-		return config.LoadDefaultConfig(ctx, config.WithRegion(region))
-	}
-	return config.LoadDefaultConfig(ctx)
-}
-
-// LoadAWSConfigWithProfile loads AWS config with awsc profile and region override
-func LoadAWSConfigWithProfile(ctx context.Context) (aws.Config, error) {
-	// Use region override if provided, otherwise use default region from config
-	region := viper.GetString("default_region")
-
-	// Try to load with awsc profile first
+	// Explicitly use empty profile to ignore AWS_PROFILE environment variable
 	options := []func(*config.LoadOptions) error{
-		config.WithSharedConfigProfile("awsc"),
+		config.WithSharedConfigProfile(""),
 	}
 
 	if region != "" {
 		options = append(options, config.WithRegion(region))
 	}
 
-	cfg, err := config.LoadDefaultConfig(ctx, options...)
-	if err != nil {
-		// Only fall back if profile doesn't exist, not for credential errors
-		if strings.Contains(err.Error(), "failed to get shared config profile") {
-			if region != "" {
-				return config.LoadDefaultConfig(ctx, config.WithRegion(region))
-			}
-			return config.LoadDefaultConfig(ctx)
+	return config.LoadDefaultConfig(ctx, options...)
+}
+
+// LoadAWSConfigWithProfile loads AWS config using hybrid approach:
+// 1. AWSC_PROFILE environment variable (explicit override)
+// 2. PPID session tracking (automatic per-terminal)
+// 3. Error if neither exists
+func LoadAWSConfigWithProfile(ctx context.Context) (aws.Config, error) {
+	// Use region override if provided, otherwise use default region from config
+	region := viper.GetString("default_region")
+
+	var profileName string
+
+	// Priority 1: Check AWSC_PROFILE environment variable
+	envProfile := os.Getenv("AWSC_PROFILE")
+	if envProfile != "" {
+		profileName = envProfile
+	} else {
+		// Priority 2: Check PPID session
+		session, err := GetCurrentSession()
+		if err != nil {
+			// No session found
+			return aws.Config{}, fmt.Errorf("no active session")
 		}
-		// For other errors (like credential issues), return the error
-		return cfg, err
+		profileName = session.ProfileName
 	}
 
-	return cfg, nil
+	// Load config with the determined profile
+	options := []func(*config.LoadOptions) error{
+		config.WithSharedConfigProfile(profileName),
+	}
+
+	if region != "" {
+		options = append(options, config.WithRegion(region))
+	}
+
+	return config.LoadDefaultConfig(ctx, options...)
 }

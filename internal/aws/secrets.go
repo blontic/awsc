@@ -206,7 +206,7 @@ func (s *SecretsManager) RunShowSecrets(ctx context.Context, secretName string) 
 	}
 
 	selectedSecret := secrets[selectedIndex].Name
-	fmt.Printf("Selected: %s\n", selectedSecret)
+	fmt.Printf("✓ Selected: %s\n", selectedSecret)
 
 	// Get secret value
 	secretValue, err := s.GetSecretValue(ctx, selectedSecret)

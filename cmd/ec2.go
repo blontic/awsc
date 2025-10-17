@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/blontic/awsc/internal/aws"
 	"github.com/spf13/cobra"
@@ -30,6 +31,7 @@ var ec2RdpCmd = &cobra.Command{
 
 var instanceId string
 var rdpLocalPort int32
+var ec2SwitchAccount bool
 
 func init() {
 	rootCmd.AddCommand(ec2Cmd)
@@ -40,6 +42,10 @@ func init() {
 	ec2ConnectCmd.Flags().StringVar(&instanceId, "instance-id", "", "EC2 instance ID to connect to (optional)")
 	ec2RdpCmd.Flags().StringVar(&instanceId, "instance-id", "", "EC2 instance ID to connect to (optional)")
 	ec2RdpCmd.Flags().Int32Var(&rdpLocalPort, "local-port", 3389, "Local port for RDP forwarding (default: 3389)")
+
+	// Add switch-account flag to both commands
+	ec2ConnectCmd.Flags().BoolVarP(&ec2SwitchAccount, "switch-account", "s", false, "Switch AWS account before connecting")
+	ec2RdpCmd.Flags().BoolVarP(&ec2SwitchAccount, "switch-account", "s", false, "Switch AWS account before connecting")
 }
 
 func createEC2Manager() (*aws.EC2Manager, error) {
@@ -50,10 +56,37 @@ func createEC2Manager() (*aws.EC2Manager, error) {
 func runEC2Connect(cmd *cobra.Command, args []string) {
 	ctx := context.Background()
 
+	// Handle account switching if requested
+	if ec2SwitchAccount {
+		if err := handleAccountSwitch(ctx); err != nil {
+			fmt.Printf("%v\n", err)
+			os.Exit(1)
+		}
+	}
+
 	ec2Manager, err := createEC2Manager()
 	if err != nil {
-		fmt.Printf("Error creating EC2 manager: %v\n", err)
-		return
+		// Check if this is a "no active session" error
+		if aws.IsAuthError(err) {
+			shouldReauth, reAuthErr := aws.PromptForReauth(ctx)
+			if reAuthErr != nil {
+				fmt.Printf("Error during re-authentication: %v\n", reAuthErr)
+				os.Exit(1)
+			}
+			if !shouldReauth {
+				fmt.Printf("Authentication cancelled\n")
+				os.Exit(1)
+			}
+			// Retry creating manager after successful login
+			ec2Manager, err = createEC2Manager()
+			if err != nil {
+				fmt.Printf("Error creating EC2 manager after re-authentication: %v\n", err)
+				os.Exit(1)
+			}
+		} else {
+			fmt.Printf("Error creating EC2 manager: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	// Get instance-id flag value
@@ -61,16 +94,44 @@ func runEC2Connect(cmd *cobra.Command, args []string) {
 
 	if err := ec2Manager.RunConnect(ctx, instanceIdFlag); err != nil {
 		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
 	}
 }
 
 func runEC2RDP(cmd *cobra.Command, args []string) {
 	ctx := context.Background()
 
+	// Handle account switching if requested
+	if ec2SwitchAccount {
+		if err := handleAccountSwitch(ctx); err != nil {
+			fmt.Printf("%v\n", err)
+			os.Exit(1)
+		}
+	}
+
 	ec2Manager, err := createEC2Manager()
 	if err != nil {
-		fmt.Printf("Error creating EC2 manager: %v\n", err)
-		return
+		// Check if this is a "no active session" error
+		if aws.IsAuthError(err) {
+			shouldReauth, reAuthErr := aws.PromptForReauth(ctx)
+			if reAuthErr != nil {
+				fmt.Printf("Error during re-authentication: %v\n", reAuthErr)
+				os.Exit(1)
+			}
+			if !shouldReauth {
+				fmt.Printf("Authentication cancelled\n")
+				os.Exit(1)
+			}
+			// Retry creating manager after successful login
+			ec2Manager, err = createEC2Manager()
+			if err != nil {
+				fmt.Printf("Error creating EC2 manager after re-authentication: %v\n", err)
+				os.Exit(1)
+			}
+		} else {
+			fmt.Printf("Error creating EC2 manager: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	// Get flag values
@@ -79,5 +140,6 @@ func runEC2RDP(cmd *cobra.Command, args []string) {
 
 	if err := ec2Manager.RunRDP(ctx, instanceIdFlag, localPortFlag); err != nil {
 		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
 	}
 }

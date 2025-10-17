@@ -1,14 +1,16 @@
 package ui
 
 import (
-	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
-	"github.com/aws/aws-sdk-go-v2/service/sts"
 	awscconfig "github.com/blontic/awsc/internal/config"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/spf13/viper"
 )
 
 type SelectorModel struct {
@@ -130,10 +132,13 @@ func (m SelectorModel) View() string {
 
 	// AWS Context Header
 	if m.awsContext != nil {
+		// Style for values - bright green
+		valueStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
+
 		headerText := fmt.Sprintf("Account: %s | Role: %s | Region: %s",
-			m.awsContext.Account,
-			m.awsContext.Role,
-			m.awsContext.Region)
+			valueStyle.Render(m.awsContext.Account),
+			valueStyle.Render(m.awsContext.Role),
+			valueStyle.Render(m.awsContext.Region))
 
 		s.WriteString(headerText)
 		s.WriteString("\n\n")
@@ -283,41 +288,68 @@ func runSimpleSelectorWithSelectability(title string, choices []string, selectab
 }
 
 func getAWSContext() *AWSContext {
-	ctx := context.Background()
-	cfg, err := awscconfig.LoadAWSConfigWithProfile(ctx)
-	if err != nil {
-		return nil
-	}
+	// Check AWSC_PROFILE environment variable first (same priority as LoadAWSConfigWithProfile)
+	envProfile := os.Getenv("AWSC_PROFILE")
 
-	stsClient := sts.NewFromConfig(cfg)
-	identity, err := stsClient.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
-	if err != nil {
-		return nil
-	}
+	var accountName, roleName string
 
-	// Parse ARN to get account and role
-	accountId := *identity.Account
-	role := "unknown"
-
-	if identity.Arn != nil {
-		// ARN format: arn:aws:sts::123456789012:assumed-role/RoleName/SessionName
-		parts := strings.Split(*identity.Arn, "/")
-		if len(parts) >= 2 && strings.Contains(*identity.Arn, "assumed-role") {
-			role = parts[1]
+	if envProfile != "" {
+		// Parse profile name to extract account name
+		// Profile format: awsc-{accountName}
+		if strings.HasPrefix(envProfile, "awsc-") {
+			accountName = strings.TrimPrefix(envProfile, "awsc-")
+		} else {
+			accountName = envProfile
 		}
+
+		// Try to get role from session files by matching profile name
+		// This is best effort - if not found, we'll show "unknown"
+		roleName = "unknown"
+		homeDir, err := os.UserHomeDir()
+		if err == nil {
+			sessionsDir := filepath.Join(homeDir, ".awsc", "sessions")
+			files, err := os.ReadDir(sessionsDir)
+			if err == nil {
+				for _, file := range files {
+					if !file.IsDir() && strings.HasSuffix(file.Name(), ".json") {
+						sessionPath := filepath.Join(sessionsDir, file.Name())
+						data, err := os.ReadFile(sessionPath)
+						if err == nil {
+							var session awscconfig.SessionInfo
+							if err := json.Unmarshal(data, &session); err == nil {
+								if session.ProfileName == envProfile {
+									accountName = session.AccountName
+									roleName = session.RoleName
+									break
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	} else {
+		// Fallback to PPID session
+		session, err := awscconfig.GetCurrentSession()
+		if err != nil {
+			return nil
+		}
+		accountName = session.AccountName
+		roleName = session.RoleName
 	}
 
-	// Get account name from cache, fallback to account ID
-	account := awscconfig.GetAccountName(accountId)
-
-	region := cfg.Region
+	// Get region from config
+	region := viper.GetString("default_region")
+	if region == "" {
+		region = viper.GetString("sso.region")
+	}
 	if region == "" {
 		region = "default"
 	}
 
 	return &AWSContext{
-		Account: account,
-		Role:    role,
+		Account: accountName,
+		Role:    roleName,
 		Region:  region,
 	}
 }

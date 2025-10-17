@@ -111,3 +111,60 @@ func TestRunEC2RDP(t *testing.T) {
 	// Business logic is tested in internal/aws package
 	// This only tests CLI interface
 }
+func TestEC2ConnectSwitchAccountFlag(t *testing.T) {
+	// Test that switch-account flag is properly defined for connect command
+	switchAccountFlag := ec2ConnectCmd.Flags().Lookup("switch-account")
+	if switchAccountFlag == nil {
+		t.Error("--switch-account flag should be defined for EC2 connect command")
+	}
+
+	if switchAccountFlag.Shorthand != "s" {
+		t.Errorf("Expected shorthand 's' for switch-account flag, got '%s'", switchAccountFlag.Shorthand)
+	}
+
+	if switchAccountFlag.DefValue != "false" {
+		t.Errorf("Expected switch-account flag default to be false, got '%s'", switchAccountFlag.DefValue)
+	}
+
+	if switchAccountFlag.Usage == "" {
+		t.Error("--switch-account flag should have usage description")
+	}
+}
+
+func TestEC2RdpSwitchAccountFlag(t *testing.T) {
+	// Test that switch-account flag is properly defined for RDP command
+	switchAccountFlag := ec2RdpCmd.Flags().Lookup("switch-account")
+	if switchAccountFlag == nil {
+		t.Error("--switch-account flag should be defined for EC2 RDP command")
+	}
+
+	if switchAccountFlag.Shorthand != "s" {
+		t.Errorf("Expected shorthand 's' for switch-account flag, got '%s'", switchAccountFlag.Shorthand)
+	}
+
+	if switchAccountFlag.DefValue != "false" {
+		t.Errorf("Expected switch-account flag default to be false, got '%s'", switchAccountFlag.DefValue)
+	}
+
+	if switchAccountFlag.Usage == "" {
+		t.Error("--switch-account flag should have usage description")
+	}
+}
+
+func TestEC2FlagsStillPresent(t *testing.T) {
+	// Ensure existing flags are still present after adding switch-account
+	instanceIdFlag := ec2ConnectCmd.Flags().Lookup("instance-id")
+	if instanceIdFlag == nil {
+		t.Error("--instance-id flag should still be defined for EC2 connect command")
+	}
+
+	rdpInstanceIdFlag := ec2RdpCmd.Flags().Lookup("instance-id")
+	if rdpInstanceIdFlag == nil {
+		t.Error("--instance-id flag should still be defined for EC2 RDP command")
+	}
+
+	localPortFlag := ec2RdpCmd.Flags().Lookup("local-port")
+	if localPortFlag == nil {
+		t.Error("--local-port flag should still be defined for EC2 RDP command")
+	}
+}

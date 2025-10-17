@@ -1,7 +1,12 @@
 package ui
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/spf13/viper"
 )
 
 func TestNewSelector(t *testing.T) {
@@ -232,4 +237,156 @@ func contains(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func TestGetAWSContext_WithEnvVar(t *testing.T) {
+	// Create temporary directory for test
+	tempDir := t.TempDir()
+
+	// Override home directory for test
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempDir)
+	defer os.Setenv("HOME", originalHome)
+
+	// Create a session file
+	sessionsDir := filepath.Join(tempDir, ".awsc", "sessions")
+	if err := os.MkdirAll(sessionsDir, 0700); err != nil {
+		t.Fatalf("Failed to create sessions directory: %v", err)
+	}
+
+	sessionContent := `{
+  "profile_name": "awsc-test-account",
+  "account_id": "123456789012",
+  "account_name": "test-account",
+  "role_name": "TestRole"
+}`
+	sessionPath := filepath.Join(sessionsDir, "session-12345.json")
+	if err := os.WriteFile(sessionPath, []byte(sessionContent), 0600); err != nil {
+		t.Fatalf("Failed to write session file: %v", err)
+	}
+
+	// Set AWSC_PROFILE environment variable
+	originalProfile := os.Getenv("AWSC_PROFILE")
+	os.Setenv("AWSC_PROFILE", "awsc-test-account")
+	defer func() {
+		if originalProfile != "" {
+			os.Setenv("AWSC_PROFILE", originalProfile)
+		} else {
+			os.Unsetenv("AWSC_PROFILE")
+		}
+	}()
+
+	// Set up viper config
+	viper.Set("default_region", "us-west-2")
+	defer viper.Reset()
+
+	// Call getAWSContext
+	ctx := getAWSContext()
+
+	// Verify results
+	if ctx == nil {
+		t.Fatal("Expected context, got nil")
+	}
+
+	if ctx.Account != "test-account" {
+		t.Errorf("Expected account 'test-account', got '%s'", ctx.Account)
+	}
+
+	if ctx.Role != "TestRole" {
+		t.Errorf("Expected role 'TestRole', got '%s'", ctx.Role)
+	}
+
+	if ctx.Region != "us-west-2" {
+		t.Errorf("Expected region 'us-west-2', got '%s'", ctx.Region)
+	}
+}
+
+func TestGetAWSContext_NoEnvVar(t *testing.T) {
+	// Create temporary directory for test
+	tempDir := t.TempDir()
+
+	// Override home directory for test
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempDir)
+	defer os.Setenv("HOME", originalHome)
+
+	// Ensure AWSC_PROFILE is not set
+	originalProfile := os.Getenv("AWSC_PROFILE")
+	os.Unsetenv("AWSC_PROFILE")
+	defer func() {
+		if originalProfile != "" {
+			os.Setenv("AWSC_PROFILE", originalProfile)
+		}
+	}()
+
+	// Create a session file for current PPID
+	ppid := os.Getppid()
+	sessionsDir := filepath.Join(tempDir, ".awsc", "sessions")
+	if err := os.MkdirAll(sessionsDir, 0700); err != nil {
+		t.Fatalf("Failed to create sessions directory: %v", err)
+	}
+
+	sessionContent := `{
+  "profile_name": "awsc-ppid-account",
+  "account_id": "999888777666",
+  "account_name": "ppid-account",
+  "role_name": "PPIDRole"
+}`
+	sessionPath := filepath.Join(sessionsDir, fmt.Sprintf("session-%d.json", ppid))
+	if err := os.WriteFile(sessionPath, []byte(sessionContent), 0600); err != nil {
+		t.Fatalf("Failed to write session file: %v", err)
+	}
+
+	// Set up viper config
+	viper.Set("default_region", "ap-southeast-2")
+	defer viper.Reset()
+
+	// Call getAWSContext
+	ctx := getAWSContext()
+
+	// Verify results
+	if ctx == nil {
+		t.Fatal("Expected context, got nil")
+	}
+
+	if ctx.Account != "ppid-account" {
+		t.Errorf("Expected account 'ppid-account', got '%s'", ctx.Account)
+	}
+
+	if ctx.Role != "PPIDRole" {
+		t.Errorf("Expected role 'PPIDRole', got '%s'", ctx.Role)
+	}
+
+	if ctx.Region != "ap-southeast-2" {
+		t.Errorf("Expected region 'ap-southeast-2', got '%s'", ctx.Region)
+	}
+}
+
+func TestGetAWSContext_NoSession(t *testing.T) {
+	// Create temporary directory for test
+	tempDir := t.TempDir()
+
+	// Override home directory for test
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempDir)
+	defer os.Setenv("HOME", originalHome)
+
+	// Ensure AWSC_PROFILE is not set
+	originalProfile := os.Getenv("AWSC_PROFILE")
+	os.Unsetenv("AWSC_PROFILE")
+	defer func() {
+		if originalProfile != "" {
+			os.Setenv("AWSC_PROFILE", originalProfile)
+		}
+	}()
+
+	// Don't create any session files
+
+	// Call getAWSContext
+	ctx := getAWSContext()
+
+	// Should return nil when no session exists
+	if ctx != nil {
+		t.Error("Expected nil context when no session exists")
+	}
 }

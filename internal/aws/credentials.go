@@ -6,7 +6,7 @@ import (
 	"crypto/sha1"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,9 +15,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/sso/types"
 	"github.com/aws/aws-sdk-go-v2/service/ssooidc"
-	"github.com/aws/aws-sdk-go-v2/service/sts"
 	awscconfig "github.com/blontic/awsc/internal/config"
 	"github.com/spf13/viper"
 )
@@ -51,65 +49,6 @@ func NewCredentialsManager(ctx context.Context) (*CredentialsManager, error) {
 	}, nil
 }
 
-func SetupCredentials(accountId, roleName string, creds *types.RoleCredentials) error {
-	// Write to AWS config file with awsc profile
-	return writeAWSProfile("awsc", accountId, roleName, creds)
-}
-
-// writeAWSProfile writes credentials to the AWS config file with the specified profile
-func writeAWSProfile(profileName, accountId, roleName string, creds *types.RoleCredentials) error {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-
-	awsDir := filepath.Join(homeDir, ".aws")
-	if err := os.MkdirAll(awsDir, 0755); err != nil {
-		return err
-	}
-
-	configFile := filepath.Join(awsDir, "config")
-
-	// Read existing config file
-	var existingContent string
-	if data, err := os.ReadFile(configFile); err == nil {
-		existingContent = string(data)
-	}
-
-	// Remove any existing profile sections
-	profileHeader := fmt.Sprintf("[profile %s]", profileName)
-	lines := strings.Split(existingContent, "\n")
-	var filteredLines []string
-	inTargetProfile := false
-
-	for _, line := range lines {
-		if strings.TrimSpace(line) == profileHeader {
-			inTargetProfile = true
-			continue
-		}
-		if strings.HasPrefix(strings.TrimSpace(line), "[") && strings.HasSuffix(strings.TrimSpace(line), "]") {
-			inTargetProfile = false
-		}
-		if !inTargetProfile {
-			filteredLines = append(filteredLines, line)
-		}
-	}
-
-	// Add new profile
-	newContent := strings.Join(filteredLines, "\n")
-	if newContent != "" && !strings.HasSuffix(newContent, "\n") {
-		newContent += "\n"
-	}
-	newContent += fmt.Sprintf(`[profile %s]
-aws_access_key_id = %s
-aws_secret_access_key = %s
-aws_session_token = %s
-`, profileName, *creds.AccessKeyId, *creds.SecretAccessKey, *creds.SessionToken)
-
-	// Write the updated config file
-	return os.WriteFile(configFile, []byte(newContent), 0644)
-}
-
 // IsAuthError checks if an error is related to authentication/credentials
 func IsAuthError(err error) bool {
 	if err == nil {
@@ -120,7 +59,9 @@ func IsAuthError(err error) bool {
 	if contains(errorStr, "is not authorized to perform") {
 		return false
 	}
-	return contains(errorStr, "AuthFailure") ||
+	return contains(errorStr, "no active session") ||
+		contains(errorStr, "failed to get shared config profile") ||
+		contains(errorStr, "AuthFailure") ||
 		contains(errorStr, "SignatureDoesNotMatch") ||
 		contains(errorStr, "TokenRefreshRequired") ||
 		contains(errorStr, "ExpiredToken") ||
@@ -157,7 +98,7 @@ func (c *CredentialsManager) GetCachedToken() (*string, error) {
 	cacheFile := filepath.Join(cacheDir, filename)
 
 	// Check if the specific cache file exists
-	data, err := ioutil.ReadFile(cacheFile)
+	data, err := os.ReadFile(cacheFile)
 	if err != nil {
 		return nil, fmt.Errorf("no SSO cache found for this start URL, please run 'awsc login'")
 	}
@@ -268,7 +209,7 @@ func (c *CredentialsManager) saveTokenToCache(startURL, ssoRegion string, access
 		return err
 	}
 
-	return ioutil.WriteFile(cacheFile, data, 0600)
+	return os.WriteFile(cacheFile, data, 0600)
 }
 
 func openBrowser(url string) error {
@@ -297,25 +238,30 @@ func isRetryableError(err error) bool {
 		strings.Contains(errorStr, "slow_down")
 }
 
-// CheckCredentialsValid verifies if current credentials are valid by trying an AWS call
-func CheckCredentialsValid(ctx context.Context) error {
-	cfg, err := awscconfig.LoadAWSConfigWithProfile(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to load AWS config: %w", err)
-	}
-
-	stsClient := sts.NewFromConfig(cfg)
-	_, err = stsClient.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
-	if err != nil {
-		return fmt.Errorf("invalid AWS session: %w", err)
-	}
-
-	return nil
-}
-
 // PromptForReauth asks the user if they want to re-authenticate and runs login if yes
 func PromptForReauth(ctx context.Context) (bool, error) {
-	// Check if this is a config issue first
+	// Check if this is a "no active session" error
+	cfg, loadErr := awscconfig.LoadAWSConfigWithProfile(ctx)
+	_ = cfg // Unused, just checking the error
+
+	if loadErr != nil && strings.Contains(loadErr.Error(), "no active session") {
+		fmt.Fprintf(os.Stderr, "No active session found. Please login first.\n")
+
+		// Auto-trigger login
+		ssoManager, err := NewSSOManager(ctx)
+		if err != nil {
+			return false, fmt.Errorf("failed to create SSO manager: %w", err)
+		}
+
+		if err := ssoManager.RunLogin(ctx, false, "", ""); err != nil {
+			return false, fmt.Errorf("authentication failed: %w", err)
+		}
+
+		fmt.Fprintf(os.Stderr, "Authentication successful. Retrying operation...\n")
+		return true, nil
+	}
+
+	// Check if this is a config issue
 	if viper.GetString("sso.start_url") == "" {
 		fmt.Fprintf(os.Stderr, "No SSO configuration found. Set up configuration? (y/n): ")
 
@@ -363,30 +309,4 @@ func PromptForReauth(ctx context.Context) (bool, error) {
 
 	fmt.Fprintf(os.Stderr, "Authentication successful. Retrying operation...\n")
 	return true, nil
-}
-
-// HandleExpiredCredentials prompts user to re-authenticate when credentials expire
-func HandleExpiredCredentials(ctx context.Context) error {
-	fmt.Printf("\nCredentials have expired. Would you like to re-authenticate? (y/N): ")
-
-	var response string
-	fmt.Scanln(&response)
-
-	response = strings.TrimSpace(strings.ToLower(response))
-	if response != "y" && response != "yes" {
-		return fmt.Errorf("authentication cancelled")
-	}
-
-	// Create SSO manager and run login
-	ssoManager, err := NewSSOManager(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to create SSO manager: %v", err)
-	}
-
-	return ssoManager.RunLogin(ctx, true, "", "")
-}
-
-// CheckAWSSession verifies if there's a valid AWS session
-func CheckAWSSession(ctx context.Context) error {
-	return CheckCredentialsValid(ctx)
 }

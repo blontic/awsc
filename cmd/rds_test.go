@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -81,6 +82,46 @@ func TestRDSConnectFlags(t *testing.T) {
 	if localPortFlag != nil {
 		if localPortFlag.Usage == "" {
 			t.Error("--local-port flag should have usage description")
+		}
+	}
+}
+
+func TestRDSConnectSwitchAccountFlag(t *testing.T) {
+	// Test that switch-account flag is properly defined
+	switchAccountFlag := rdsConnectCmd.Flags().Lookup("switch-account")
+	if switchAccountFlag == nil {
+		t.Error("--switch-account flag should be defined for RDS connect command")
+	}
+
+	if switchAccountFlag.Shorthand != "s" {
+		t.Errorf("Expected shorthand 's' for switch-account flag, got '%s'", switchAccountFlag.Shorthand)
+	}
+
+	if switchAccountFlag.DefValue != "false" {
+		t.Errorf("Expected switch-account flag default to be false, got '%s'", switchAccountFlag.DefValue)
+	}
+
+	// Test that existing flags are still present
+	nameFlag := rdsConnectCmd.Flags().Lookup("name")
+	if nameFlag == nil {
+		t.Error("--name flag should still be defined for RDS connect command")
+	}
+
+	localPortFlag := rdsConnectCmd.Flags().Lookup("local-port")
+	if localPortFlag == nil {
+		t.Error("--local-port flag should still be defined for RDS connect command")
+	}
+}
+
+func TestRDSConnectFlagUsage(t *testing.T) {
+	// Test that the flag has proper usage description
+	switchAccountFlag := rdsConnectCmd.Flags().Lookup("switch-account")
+	if switchAccountFlag != nil {
+		if switchAccountFlag.Usage == "" {
+			t.Error("--switch-account flag should have usage description")
+		}
+		if !strings.Contains(switchAccountFlag.Usage, "Switch AWS account") {
+			t.Errorf("Expected usage to mention 'Switch AWS account', got '%s'", switchAccountFlag.Usage)
 		}
 	}
 }

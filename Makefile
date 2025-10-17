@@ -16,7 +16,6 @@ build-all:
 	GOOS=darwin GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o bin/awsc-darwin-amd64 main.go
 	GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o bin/awsc-darwin-arm64 main.go
 	GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o bin/awsc-linux-amd64 main.go
-	GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o bin/awsc-windows-amd64.exe main.go
 
 # Clean build artifacts
 clean:
@@ -51,7 +50,7 @@ install:
 mocks:
 	rm -rf internal/aws/mocks
 	mkdir -p internal/aws/mocks
-	cd internal/aws && go run go.uber.org/mock/mockgen -destination=mocks/aws_mocks.go -package=mocks . RDSClient,EC2Client,SSMClient,SecretsManagerClient
+	cd internal/aws && go run go.uber.org/mock/mockgen -destination=mocks/aws_mocks.go -package=mocks . RDSClient,EC2Client,SSMClient,SecretsManagerClient,OpenSearchClient
 
 # Development workflow: build and test
 dev: mocks deps test build
