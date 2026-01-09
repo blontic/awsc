@@ -16,8 +16,9 @@ import (
 
 // ConsoleManager handles opening the AWS Management Console in a web browser
 type ConsoleManager struct {
-	cfg     aws.Config
-	session *awscconfig.SessionInfo
+	cfg            aws.Config
+	session        *awscconfig.SessionInfo
+	logoutFirst    bool
 }
 
 // NewConsoleManager creates a new ConsoleManager
@@ -33,9 +34,15 @@ func NewConsoleManager(ctx context.Context) (*ConsoleManager, error) {
 	}
 
 	return &ConsoleManager{
-		cfg:     cfg,
-		session: session,
+		cfg:         cfg,
+		session:     session,
+		logoutFirst: false,
 	}, nil
+}
+
+// SetLogoutFirst configures the manager to logout before opening console
+func (c *ConsoleManager) SetLogoutFirst(logout bool) {
+	c.logoutFirst = logout
 }
 
 // federationSigninResponse represents the response from AWS federation signin endpoint
@@ -45,6 +52,17 @@ type federationSigninResponse struct {
 
 // OpenConsole opens the AWS Management Console in the default web browser
 func (c *ConsoleManager) OpenConsole(ctx context.Context, service string) error {
+	// If logoutFirst is set, logout of AWS console first
+	if c.logoutFirst {
+		fmt.Printf("Logging out of existing AWS console session...\n")
+		logoutURL := "https://signin.aws.amazon.com/oauth?Action=logout"
+		if err := OpenBrowser(logoutURL); err != nil {
+			return fmt.Errorf("failed to open logout URL: %w", err)
+		}
+		// Wait a moment for logout to process
+		time.Sleep(2 * time.Second)
+	}
+
 	// Get credentials from the config
 	creds, err := c.cfg.Credentials.Retrieve(ctx)
 	if err != nil {

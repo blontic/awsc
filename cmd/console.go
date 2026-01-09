@@ -31,10 +31,19 @@ func runConsole(cmd *cobra.Command, args []string) {
 	// Track if we just authenticated
 	justAuthenticated := false
 
-	// Create console manager
+	// Handle account switching FIRST, before creating the console manager
+	if consoleSwitchAccount {
+		if err := handleAccountSwitch(ctx); err != nil {
+			fmt.Printf("%v\n", err)
+			os.Exit(1)
+		}
+		justAuthenticated = true
+	}
+
+	// Now create console manager with the correct (potentially switched) account
 	consoleManager, err := aws.NewConsoleManager(ctx)
 	if err != nil {
-		if aws.IsAuthError(err) {
+		if aws.IsAuthError(err) && !justAuthenticated {
 			shouldReauth, reAuthErr := aws.PromptForReauth(ctx)
 			if reAuthErr != nil {
 				fmt.Printf("Error during re-authentication: %v\n", reAuthErr)
@@ -44,7 +53,6 @@ func runConsole(cmd *cobra.Command, args []string) {
 				fmt.Printf("Authentication cancelled\n")
 				os.Exit(1)
 			}
-			justAuthenticated = true
 			// Retry after auth
 			consoleManager, err = aws.NewConsoleManager(ctx)
 			if err != nil {
@@ -57,18 +65,9 @@ func runConsole(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	// Handle account switching
-	if consoleSwitchAccount && !justAuthenticated {
-		if err := handleAccountSwitch(ctx); err != nil {
-			fmt.Printf("%v\n", err)
-			os.Exit(1)
-		}
-		// Recreate manager after account switch
-		consoleManager, err = aws.NewConsoleManager(ctx)
-		if err != nil {
-			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
-		}
+	// If we switched accounts, logout of console first to avoid session conflicts
+	if consoleSwitchAccount {
+		consoleManager.SetLogoutFirst(true)
 	}
 
 	if err := consoleManager.OpenConsole(ctx, consoleService); err != nil {
