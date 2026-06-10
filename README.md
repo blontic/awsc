@@ -116,6 +116,7 @@ All commands support both interactive selection and direct parameter access:
 ./awsc rds connect --name "my-cluster (reader)"  # Connect to Aurora cluster reader endpoint
 ./awsc rds connect --name my-db-instance --local-port 5432  # Connect with custom local port
 ./awsc rds connect -s --name my-db  # Switch AWS account first, then connect
+./awsc rds connect -l --name my-db  # List and select bastion host manually
 
 # EC2 Sessions
 ./awsc ec2 connect             # List and select EC2 instances for SSM session
@@ -131,6 +132,7 @@ All commands support both interactive selection and direct parameter access:
 ./awsc opensearch connect --name my-domain  # Connect to specific OpenSearch domain directly
 ./awsc opensearch connect --name my-domain --local-port 9200  # Connect with custom local port
 ./awsc opensearch connect -s --name prod-domain  # Switch AWS account first, then connect
+./awsc opensearch connect -l --name my-domain  # List and select bastion host manually
 
 # Secrets Manager
 ./awsc secrets show            # List and select secrets interactively
