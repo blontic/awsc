@@ -79,7 +79,7 @@ func runSecretsShowCommand(cmd *cobra.Command, args []string) {
 
 	// Run the secrets show operation
 	if err := secretsManager.RunShowSecrets(ctx, secretName); err != nil {
-		fmt.Printf("Error: %v\n", err)
+		fmt.Printf("\n✗ Error: %v\n", err)
 		os.Exit(1)
 	}
 }

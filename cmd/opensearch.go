@@ -25,6 +25,7 @@ var opensearchConnectCmd = &cobra.Command{
 var opensearchLocalPort int
 var opensearchDomainName string
 var opensearchSwitchAccount bool
+var opensearchListBastions bool
 
 func init() {
 	rootCmd.AddCommand(opensearchCmd)
@@ -32,6 +33,7 @@ func init() {
 	opensearchConnectCmd.Flags().IntVar(&opensearchLocalPort, "local-port", 443, "Local port for port forwarding (defaults to 443)")
 	opensearchConnectCmd.Flags().StringVar(&opensearchDomainName, "name", "", "Name of the OpenSearch domain to connect to directly")
 	opensearchConnectCmd.Flags().BoolVarP(&opensearchSwitchAccount, "switch-account", "s", false, "Switch AWS account before connecting")
+	opensearchConnectCmd.Flags().BoolVarP(&opensearchListBastions, "list-bastions", "l", false, "List and select from available bastion hosts")
 }
 
 func runOpenSearchConnect(cmd *cobra.Command, args []string) {
@@ -82,8 +84,8 @@ func runOpenSearchConnect(cmd *cobra.Command, args []string) {
 	}
 
 	// Run the OpenSearch connect workflow
-	if err := opensearchManager.RunConnect(ctx, opensearchDomainName, int32(opensearchLocalPort)); err != nil {
-		fmt.Printf("Error: %v\n", err)
+	if err := opensearchManager.RunConnect(ctx, opensearchDomainName, int32(opensearchLocalPort), opensearchListBastions); err != nil {
+		fmt.Printf("\n✗ Error: %v\n", err)
 		os.Exit(1)
 	}
 }

@@ -263,3 +263,100 @@ func TestSecretsManager_DisplaySecret_InvalidJSON(t *testing.T) {
 	// This should fall back to plain text display without panicking
 	manager.DisplaySecret(context.Background(), secretName, secretValue)
 }
+
+func TestSecretsManager_RunShowSecrets_WithName_Success(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockClient := mocks.NewMockSecretsManagerClient(ctrl)
+	manager, _ := NewSecretsManager(context.Background(), SecretsManagerOptions{
+		Client: mockClient,
+		Region: "us-east-1",
+	})
+
+	mockClient.EXPECT().
+		GetSecretValue(gomock.Any(), &secretsmanager.GetSecretValueInput{
+			SecretId: aws.String("my-secret"),
+		}).
+		Return(&secretsmanager.GetSecretValueOutput{
+			SecretString: aws.String(`{"key":"value"}`),
+		}, nil)
+
+	err := manager.RunShowSecrets(context.Background(), "my-secret")
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+}
+
+func TestSecretsManager_RunShowSecrets_WithName_NotFound(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockClient := mocks.NewMockSecretsManagerClient(ctrl)
+	manager, _ := NewSecretsManager(context.Background(), SecretsManagerOptions{
+		Client: mockClient,
+		Region: "us-east-1",
+	})
+
+	mockClient.EXPECT().
+		GetSecretValue(gomock.Any(), gomock.Any()).
+		Return(nil, &types.ResourceNotFoundException{})
+
+	err := manager.RunShowSecrets(context.Background(), "nonexistent")
+	if err == nil {
+		t.Error("Expected error for nonexistent secret")
+	}
+}
+
+func TestSecretsManager_RunShowSecrets_EmptyList(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockClient := mocks.NewMockSecretsManagerClient(ctrl)
+	manager, _ := NewSecretsManager(context.Background(), SecretsManagerOptions{
+		Client: mockClient,
+		Region: "us-east-1",
+	})
+
+	mockClient.EXPECT().
+		ListSecrets(gomock.Any(), gomock.Any()).
+		Return(&secretsmanager.ListSecretsOutput{SecretList: []types.SecretListEntry{}}, nil)
+
+	err := manager.RunShowSecrets(context.Background(), "")
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+}
+
+func TestSecretsManager_ListSecrets_NewlineInDescription(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockClient := mocks.NewMockSecretsManagerClient(ctrl)
+	manager, _ := NewSecretsManager(context.Background(), SecretsManagerOptions{
+		Client: mockClient,
+		Region: "us-east-1",
+	})
+
+	mockClient.EXPECT().
+		ListSecrets(gomock.Any(), gomock.Any()).
+		Return(&secretsmanager.ListSecretsOutput{
+			SecretList: []types.SecretListEntry{
+				{
+					Name:        aws.String("edp2app/edp-to-chm-dev-db"),
+					Description: aws.String("Database: chmdb\nSchema: datasource_dev\nApp: edp2app"),
+					ARN:         aws.String("arn:aws:secretsmanager:ap-southeast-2:123:secret:test"),
+				},
+			},
+		}, nil)
+
+	secrets, err := manager.ListSecrets(context.Background())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// The raw description should still contain newlines (stripping happens at display time)
+	if secrets[0].Description != "Database: chmdb\nSchema: datasource_dev\nApp: edp2app" {
+		t.Errorf("Expected raw description with newlines, got: %s", secrets[0].Description)
+	}
+}

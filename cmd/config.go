@@ -40,14 +40,14 @@ func init() {
 
 func runConfigInit(cmd *cobra.Command, args []string) {
 	if err := config.InitializeConfigWithPrompt(); err != nil {
-		fmt.Printf("Error: %v\n", err)
+		fmt.Printf("\n✗ Error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
 func runConfigShow(cmd *cobra.Command, args []string) {
 	if err := config.ShowConfig(); err != nil {
-		fmt.Printf("Error: %v\n", err)
+		fmt.Printf("\n✗ Error: %v\n", err)
 		os.Exit(1)
 	}
 }

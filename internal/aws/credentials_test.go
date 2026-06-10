@@ -58,6 +58,11 @@ func TestIsAuthError(t *testing.T) {
 			expected: true,
 		},
 		{
+			name:     "request expired error (expired SSO credentials reported as clock skew)",
+			err:      fmt.Errorf("operation error EC2: DescribeInstances, exceeded maximum number of attempts, 3, Probable clock skew error: api error RequestExpired: Request has expired."),
+			expected: true,
+		},
+		{
 			name:     "get credentials error",
 			err:      fmt.Errorf("failed to get credentials"),
 			expected: true,

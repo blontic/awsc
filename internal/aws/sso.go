@@ -185,8 +185,7 @@ func (s *SSOManager) handleAccountRoleSelection(ctx context.Context, accessToken
 			}
 		}
 		if selectedAccountIndex == -1 {
-			fmt.Printf("Account '%s' not found. Available accounts:\n\n", accountName)
-			// Fall through to show account list
+			return fmt.Errorf("account '%s' not found", accountName)
 		} else {
 			fmt.Printf("Found account: %s\n", *selectedAccount.AccountName)
 		}
@@ -240,8 +239,7 @@ func (s *SSOManager) handleAccountRoleSelection(ctx context.Context, accessToken
 			}
 		}
 		if selectedRoleIndex == -1 {
-			fmt.Printf("Role '%s' not found in account %s. Available roles:\n\n", roleName, *selectedAccount.AccountName)
-			// Fall through to show role list
+			return fmt.Errorf("role '%s' not found in account %s", roleName, *selectedAccount.AccountName)
 		} else {
 			fmt.Printf("Found role: %s\n", *selectedRole.RoleName)
 		}

@@ -66,6 +66,7 @@ func IsAuthError(err error) bool {
 		contains(errorStr, "TokenRefreshRequired") ||
 		contains(errorStr, "ExpiredToken") ||
 		contains(errorStr, "InvalidToken") ||
+		contains(errorStr, "RequestExpired") || // expired SSO credentials (SDK may misreport as clock skew)
 		contains(errorStr, "get credentials") ||
 		contains(errorStr, "no EC2 IMDS role found") ||
 		contains(errorStr, "failed to refresh cached credentials") ||
@@ -176,7 +177,6 @@ func (c *CredentialsManager) Authenticate(ctx context.Context, startURL, ssoRegi
 
 	return fmt.Errorf("authentication timed out - please try again")
 
-	return nil
 }
 
 func (c *CredentialsManager) saveTokenToCache(startURL, ssoRegion string, accessToken *string, expiresIn *int32) error {

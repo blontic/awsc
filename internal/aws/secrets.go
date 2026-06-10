@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
@@ -166,8 +167,7 @@ func (s *SecretsManager) RunShowSecrets(ctx context.Context, secretName string) 
 		// Get secret value
 		secretValue, err := s.GetSecretValue(ctx, secretName)
 		if err != nil {
-			fmt.Printf("Secret '%s' not found. Available secrets:\n\n", secretName)
-			// Fall through to show list of available secrets
+			return fmt.Errorf("secret '%s' not found: %v", secretName, err)
 		} else {
 			// Display the secret and return
 			s.DisplaySecret(ctx, secretName, secretValue)
@@ -189,7 +189,7 @@ func (s *SecretsManager) RunShowSecrets(ctx context.Context, secretName string) 
 	// Create selection choices
 	var choices []string
 	for _, secret := range secrets {
-		description := secret.Description
+		description := strings.ReplaceAll(secret.Description, "\n", " ")
 		if description == "" {
 			description = "No description"
 		}

@@ -265,111 +265,88 @@ func TestRDSManager_getRDSSecurityGroups(t *testing.T) {
 	}
 }
 
-func TestRDSManager_checkSecurityGroupRules(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockRDS := mocks.NewMockRDSClient(ctrl)
-	mockEC2 := mocks.NewMockEC2Client(ctrl)
-
-	manager, err := NewRDSManager(context.Background(), RDSManagerOptions{
-		RDSClient: mockRDS,
-		EC2Client: mockEC2,
-		SSMClient: nil,
-		Region:    "us-east-1",
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error creating manager: %v", err)
-	}
+func TestRDSManager_canConnectWithCachedRules(t *testing.T) {
+	manager := &RDSManager{}
 
 	tests := []struct {
-		name         string
-		rdsSgId      string
-		ec2SgIds     map[string]bool
-		port         int32
-		mockResponse *ec2.DescribeSecurityGroupsOutput
-		mockError    error
-		expected     bool
+		name          string
+		ec2SGs        []types.GroupIdentifier
+		sgRulesCache  map[string][]types.IpPermission
+		port          int32
+		expected      bool
 	}{
 		{
-			name:     "security group allows access from EC2 SG",
-			rdsSgId:  "sg-rds-123",
-			ec2SgIds: map[string]bool{"sg-ec2-456": true},
-			port:     3306,
-			mockResponse: &ec2.DescribeSecurityGroupsOutput{
-				SecurityGroups: []types.SecurityGroup{
+			name:   "security group allows access from EC2 SG",
+			ec2SGs: []types.GroupIdentifier{{GroupId: aws.String("sg-ec2-456")}},
+			sgRulesCache: map[string][]types.IpPermission{
+				"sg-rds-123": {
 					{
-						IpPermissions: []types.IpPermission{
-							{
-								FromPort: aws.Int32(3306),
-								ToPort:   aws.Int32(3306),
-								UserIdGroupPairs: []types.UserIdGroupPair{
-									{GroupId: aws.String("sg-ec2-456")},
-								},
-							},
+						FromPort: aws.Int32(3306),
+						ToPort:   aws.Int32(3306),
+						UserIdGroupPairs: []types.UserIdGroupPair{
+							{GroupId: aws.String("sg-ec2-456")},
 						},
 					},
 				},
 			},
+			port:     3306,
 			expected: true,
 		},
 		{
-			name:     "security group allows open access",
-			rdsSgId:  "sg-rds-123",
-			ec2SgIds: map[string]bool{"sg-ec2-456": true},
-			port:     3306,
-			mockResponse: &ec2.DescribeSecurityGroupsOutput{
-				SecurityGroups: []types.SecurityGroup{
+			name:   "security group allows open access",
+			ec2SGs: []types.GroupIdentifier{{GroupId: aws.String("sg-ec2-456")}},
+			sgRulesCache: map[string][]types.IpPermission{
+				"sg-rds-123": {
 					{
-						IpPermissions: []types.IpPermission{
-							{
-								FromPort: aws.Int32(3306),
-								ToPort:   aws.Int32(3306),
-								IpRanges: []types.IpRange{
-									{CidrIp: aws.String("0.0.0.0/0")},
-								},
-							},
+						FromPort: aws.Int32(3306),
+						ToPort:   aws.Int32(3306),
+						IpRanges: []types.IpRange{
+							{CidrIp: aws.String("0.0.0.0/0")},
 						},
 					},
 				},
 			},
+			port:     3306,
 			expected: true,
 		},
 		{
-			name:     "security group denies access",
-			rdsSgId:  "sg-rds-123",
-			ec2SgIds: map[string]bool{"sg-ec2-456": true},
-			port:     3306,
-			mockResponse: &ec2.DescribeSecurityGroupsOutput{
-				SecurityGroups: []types.SecurityGroup{
+			name:   "security group denies access - wrong port and wrong SG",
+			ec2SGs: []types.GroupIdentifier{{GroupId: aws.String("sg-ec2-456")}},
+			sgRulesCache: map[string][]types.IpPermission{
+				"sg-rds-123": {
 					{
-						IpPermissions: []types.IpPermission{
-							{
-								FromPort: aws.Int32(5432),
-								ToPort:   aws.Int32(5432),
-								UserIdGroupPairs: []types.UserIdGroupPair{
-									{GroupId: aws.String("sg-ec2-different")},
-								},
-							},
+						FromPort: aws.Int32(5432),
+						ToPort:   aws.Int32(5432),
+						UserIdGroupPairs: []types.UserIdGroupPair{
+							{GroupId: aws.String("sg-ec2-different")},
 						},
 					},
 				},
 			},
+			port:     3306,
 			expected: false,
+		},
+		{
+			name:   "all-traffic rule matches",
+			ec2SGs: []types.GroupIdentifier{{GroupId: aws.String("sg-ec2-456")}},
+			sgRulesCache: map[string][]types.IpPermission{
+				"sg-rds-123": {
+					{
+						IpProtocol: aws.String("-1"),
+						UserIdGroupPairs: []types.UserIdGroupPair{
+							{GroupId: aws.String("sg-ec2-456")},
+						},
+					},
+				},
+			},
+			port:     3306,
+			expected: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockEC2.EXPECT().
-				DescribeSecurityGroups(gomock.Any(), &ec2.DescribeSecurityGroupsInput{
-					GroupIds: []string{tt.rdsSgId},
-				}).
-				Return(tt.mockResponse, tt.mockError).
-				Times(1)
-
-			result := manager.checkSecurityGroupRules(context.Background(), tt.rdsSgId, tt.ec2SgIds, tt.port)
-
+			result := manager.canConnectWithCachedRules(tt.ec2SGs, tt.sgRulesCache, tt.port)
 			if result != tt.expected {
 				t.Errorf("Expected %v, got %v", tt.expected, result)
 			}
@@ -421,6 +398,16 @@ func TestRDSManager_ruleMatchesPort(t *testing.T) {
 			},
 			port:     3306,
 			expected: false,
+		},
+		{
+			name: "all-traffic rule (protocol -1) matches any port",
+			rule: types.IpPermission{
+				IpProtocol: aws.String("-1"),
+				FromPort:   nil,
+				ToPort:     nil,
+			},
+			port:     3306,
+			expected: true,
 		},
 	}
 
@@ -522,56 +509,6 @@ func TestRDSManager_getSecurityGroupIds(t *testing.T) {
 	}
 }
 
-func TestRDSManager_canConnectToRDS(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockRDS := mocks.NewMockRDSClient(ctrl)
-	mockEC2 := mocks.NewMockEC2Client(ctrl)
-
-	manager, err := NewRDSManager(context.Background(), RDSManagerOptions{
-		RDSClient: mockRDS,
-		EC2Client: mockEC2,
-		SSMClient: nil,
-		Region:    "us-east-1",
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error creating manager: %v", err)
-	}
-
-	ec2SecurityGroups := []types.GroupIdentifier{
-		{GroupId: aws.String("sg-ec2-123")},
-	}
-	rdsSecurityGroups := []string{"sg-rds-456"}
-
-	// Mock the security group rules check
-	mockEC2.EXPECT().
-		DescribeSecurityGroups(gomock.Any(), &ec2.DescribeSecurityGroupsInput{
-			GroupIds: []string{"sg-rds-456"},
-		}).
-		Return(&ec2.DescribeSecurityGroupsOutput{
-			SecurityGroups: []types.SecurityGroup{
-				{
-					IpPermissions: []types.IpPermission{
-						{
-							FromPort: aws.Int32(3306),
-							ToPort:   aws.Int32(3306),
-							UserIdGroupPairs: []types.UserIdGroupPair{
-								{GroupId: aws.String("sg-ec2-123")},
-							},
-						},
-					},
-				},
-			},
-		}, nil).
-		Times(1)
-
-	result := manager.canConnectToRDS(context.Background(), ec2SecurityGroups, rdsSecurityGroups, 3306)
-	if !result {
-		t.Error("Expected canConnectToRDS to return true")
-	}
-}
-
 func TestRDSManager_FindBastionHosts_EmptyResponse(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -610,6 +547,18 @@ func TestRDSManager_FindBastionHosts_EmptyResponse(t *testing.T) {
 		}, nil).
 		Times(1)
 
+	// Mock pre-fetch of SG rules
+	mockEC2.EXPECT().
+		DescribeSecurityGroups(gomock.Any(), &ec2.DescribeSecurityGroupsInput{
+			GroupIds: []string{"sg-rds-123"},
+		}).
+		Return(&ec2.DescribeSecurityGroupsOutput{
+			SecurityGroups: []types.SecurityGroup{
+				{IpPermissions: []types.IpPermission{}},
+			},
+		}, nil).
+		Times(1)
+
 	// Mock EC2 instances call - empty response
 	mockEC2.EXPECT().
 		DescribeInstances(gomock.Any(), gomock.Any()).
@@ -618,7 +567,7 @@ func TestRDSManager_FindBastionHosts_EmptyResponse(t *testing.T) {
 		}, nil).
 		Times(1)
 
-	bastions, err := manager.FindBastionHosts(context.Background(), rdsInstance)
+	bastions, err := manager.FindBastionHosts(context.Background(), rdsInstance, false)
 	if err == nil {
 		t.Error("Expected error when no running instances found")
 	}
@@ -948,6 +897,18 @@ func TestRDSManager_FindBastionHosts_WithStoppedInstances(t *testing.T) {
 		}, nil).
 		Times(1)
 
+	// Mock pre-fetch of SG rules
+	mockEC2.EXPECT().
+		DescribeSecurityGroups(gomock.Any(), &ec2.DescribeSecurityGroupsInput{
+			GroupIds: []string{"sg-rds-123"},
+		}).
+		Return(&ec2.DescribeSecurityGroupsOutput{
+			SecurityGroups: []types.SecurityGroup{
+				{IpPermissions: []types.IpPermission{}},
+			},
+		}, nil).
+		Times(1)
+
 	// Mock EC2 instances call with stopped instances
 	mockEC2.EXPECT().
 		DescribeInstances(gomock.Any(), gomock.Any()).
@@ -985,7 +946,7 @@ func TestRDSManager_FindBastionHosts_WithStoppedInstances(t *testing.T) {
 		}, nil).
 		Times(1)
 
-	bastions, err := manager.FindBastionHosts(context.Background(), rdsInstance)
+	bastions, err := manager.FindBastionHosts(context.Background(), rdsInstance, false)
 	if err == nil {
 		t.Error("Expected error when only stopped instances found")
 	}
@@ -994,5 +955,150 @@ func TestRDSManager_FindBastionHosts_WithStoppedInstances(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no running bastion hosts found") {
 		t.Errorf("Expected error about stopped instances, got: %v", err)
+	}
+}
+
+func TestRDSManager_FindBastionHosts_SuccessfulMatch(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockRDS := mocks.NewMockRDSClient(ctrl)
+	mockEC2 := mocks.NewMockEC2Client(ctrl)
+
+	manager, _ := NewRDSManager(context.Background(), RDSManagerOptions{
+		RDSClient: mockRDS,
+		EC2Client: mockEC2,
+		Region:    "us-east-1",
+	})
+
+	rdsInstance := RDSInstance{Identifier: "test-db", Port: 3306, EndpointType: "instance"}
+
+	// Mock RDS security groups
+	mockRDS.EXPECT().
+		DescribeDBInstances(gomock.Any(), gomock.Any()).
+		Return(&rds.DescribeDBInstancesOutput{
+			DBInstances: []rdstypes.DBInstance{
+				{VpcSecurityGroups: []rdstypes.VpcSecurityGroupMembership{
+					{VpcSecurityGroupId: aws.String("sg-rds-123")},
+				}},
+			},
+		}, nil)
+
+	// Mock pre-fetch of SG rules - allows sg-ec2-456 on port 3306
+	mockEC2.EXPECT().
+		DescribeSecurityGroups(gomock.Any(), gomock.Any()).
+		Return(&ec2.DescribeSecurityGroupsOutput{
+			SecurityGroups: []types.SecurityGroup{
+				{IpPermissions: []types.IpPermission{
+					{
+						FromPort: aws.Int32(3306),
+						ToPort:   aws.Int32(3306),
+						UserIdGroupPairs: []types.UserIdGroupPair{
+							{GroupId: aws.String("sg-ec2-456")},
+						},
+					},
+				}},
+			},
+		}, nil)
+
+	// Mock EC2 instances - one running with matching SG
+	mockEC2.EXPECT().
+		DescribeInstances(gomock.Any(), gomock.Any()).
+		Return(&ec2.DescribeInstancesOutput{
+			Reservations: []types.Reservation{
+				{Instances: []types.Instance{
+					{
+						InstanceId:     aws.String("i-bastion-1"),
+						State:          &types.InstanceState{Name: "running"},
+						Tags:           []types.Tag{{Key: aws.String("Name"), Value: aws.String("bastion")}},
+						SecurityGroups: []types.GroupIdentifier{{GroupId: aws.String("sg-ec2-456")}},
+					},
+				}},
+			},
+		}, nil)
+
+	bastions, err := manager.FindBastionHosts(context.Background(), rdsInstance, false)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if len(bastions) != 1 {
+		t.Fatalf("Expected 1 bastion, got %d", len(bastions))
+	}
+	if bastions[0].InstanceId != "i-bastion-1" {
+		t.Errorf("Expected instance i-bastion-1, got %s", bastions[0].InstanceId)
+	}
+	if bastions[0].Name != "bastion" {
+		t.Errorf("Expected name bastion, got %s", bastions[0].Name)
+	}
+}
+
+func TestRDSManager_FindBastionHosts_RunningButNoSGMatch(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockRDS := mocks.NewMockRDSClient(ctrl)
+	mockEC2 := mocks.NewMockEC2Client(ctrl)
+
+	manager, _ := NewRDSManager(context.Background(), RDSManagerOptions{
+		RDSClient: mockRDS,
+		EC2Client: mockEC2,
+		Region:    "us-east-1",
+	})
+
+	rdsInstance := RDSInstance{Identifier: "test-db", Port: 3306, EndpointType: "instance"}
+
+	// Mock RDS security groups
+	mockRDS.EXPECT().
+		DescribeDBInstances(gomock.Any(), gomock.Any()).
+		Return(&rds.DescribeDBInstancesOutput{
+			DBInstances: []rdstypes.DBInstance{
+				{VpcSecurityGroups: []rdstypes.VpcSecurityGroupMembership{
+					{VpcSecurityGroupId: aws.String("sg-rds-123")},
+				}},
+			},
+		}, nil)
+
+	// Mock pre-fetch of SG rules - allows sg-other only
+	mockEC2.EXPECT().
+		DescribeSecurityGroups(gomock.Any(), gomock.Any()).
+		Return(&ec2.DescribeSecurityGroupsOutput{
+			SecurityGroups: []types.SecurityGroup{
+				{IpPermissions: []types.IpPermission{
+					{
+						FromPort: aws.Int32(3306),
+						ToPort:   aws.Int32(3306),
+						UserIdGroupPairs: []types.UserIdGroupPair{
+							{GroupId: aws.String("sg-other")},
+						},
+					},
+				}},
+			},
+		}, nil)
+
+	// Mock EC2 instances - running but SG doesn't match
+	mockEC2.EXPECT().
+		DescribeInstances(gomock.Any(), gomock.Any()).
+		Return(&ec2.DescribeInstancesOutput{
+			Reservations: []types.Reservation{
+				{Instances: []types.Instance{
+					{
+						InstanceId:     aws.String("i-wrong-sg"),
+						State:          &types.InstanceState{Name: "running"},
+						Tags:           []types.Tag{{Key: aws.String("Name"), Value: aws.String("web-server")}},
+						SecurityGroups: []types.GroupIdentifier{{GroupId: aws.String("sg-ec2-456")}},
+					},
+				}},
+			},
+		}, nil)
+
+	bastions, err := manager.FindBastionHosts(context.Background(), rdsInstance, false)
+	if err == nil {
+		t.Error("Expected error when no SG match")
+	}
+	if len(bastions) != 0 {
+		t.Errorf("Expected 0 bastions, got %d", len(bastions))
+	}
+	if !strings.Contains(err.Error(), "no suitable bastion hosts found") {
+		t.Errorf("Expected error about no suitable bastions, got: %v", err)
 	}
 }

@@ -92,23 +92,16 @@ func (e *EC2Manager) RunConnect(ctx context.Context, instanceId string) error {
 			return e.StartSSMSession(ctx, targetInstance.InstanceId)
 		}
 
-		// Instance not found or not selectable - show error and fall through to list
+		// Instance not found or not selectable
 		if targetInstance == nil {
-			fmt.Printf("Instance '%s' not found. Available instances:\n\n", instanceId)
+			return fmt.Errorf("instance '%s' not found", instanceId)
 		} else {
-			fmt.Printf("Instance '%s' is not available (state: %s). Available instances:\n\n", instanceId, targetInstance.State)
+			return fmt.Errorf("instance '%s' is not available (state: %s)", instanceId, targetInstance.State)
 		}
 	}
 
-	// List all EC2 instances (show stopped ones as non-selectable)
-	instances, err := e.ListAllInstances(ctx)
-	if err != nil {
-		return fmt.Errorf("error listing EC2 instances: %v", err)
-	}
-
-	if len(instances) == 0 {
-		return fmt.Errorf("no EC2 instances found")
-	}
+	// Use already-fetched instances for interactive selection
+	instances := allInstances
 
 	// Check if any instances are selectable and categorize them
 	hasSelectable := false
@@ -202,11 +195,11 @@ func (e *EC2Manager) RunRDP(ctx context.Context, instanceId string, localPort in
 			return e.startRDPPortForwarding(ctx, targetInstance.InstanceId, localPort)
 		}
 
-		// Instance not found or not selectable - show error and fall through to list
+		// Instance not found or not selectable
 		if targetInstance == nil {
-			fmt.Printf("Windows instance '%s' not found. Available Windows instances:\n\n", instanceId)
+			return fmt.Errorf("Windows instance '%s' not found", instanceId)
 		} else {
-			fmt.Printf("Windows instance '%s' is not available for RDP (state: %s). Available Windows instances:\n\n", instanceId, targetInstance.State)
+			return fmt.Errorf("Windows instance '%s' is not available for RDP (state: %s)", instanceId, targetInstance.State)
 		}
 	}
 

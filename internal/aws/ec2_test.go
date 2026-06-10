@@ -550,7 +550,7 @@ func TestEC2Manager_RunConnect_WithStoppedInstances(t *testing.T) {
 				},
 			},
 		}, nil).
-		Times(2) // Called twice - once for initial list, once for final list
+		Times(1)
 
 	err = manager.RunConnect(context.Background(), "")
 	if err == nil {
@@ -601,7 +601,7 @@ func TestEC2Manager_RunConnect_RunningButNoSSM(t *testing.T) {
 				},
 			},
 		}, nil).
-		Times(2) // Called twice - once for initial list, once for final list
+		Times(1)
 
 	// Mock SSM call returning no instances (no SSM agent)
 	mockSSM.EXPECT().
@@ -609,7 +609,7 @@ func TestEC2Manager_RunConnect_RunningButNoSSM(t *testing.T) {
 		Return(&ssm.DescribeInstanceInformationOutput{
 			InstanceInformationList: []ssmtypes.InstanceInformation{},
 		}, nil).
-		Times(2) // Called twice for the same instance
+		Times(1)
 
 	err = manager.RunConnect(context.Background(), "")
 	if err == nil {

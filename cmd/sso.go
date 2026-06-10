@@ -33,12 +33,12 @@ func runSSOLogin(cmd *cobra.Command, args []string) {
 	// Create SSO manager and run login
 	ssoManager, err := aws.NewSSOManager(ctx)
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
+		fmt.Printf("\n✗ Error: %v\n", err)
 		os.Exit(1)
 	}
 
 	if err := ssoManager.RunLogin(ctx, forceAuth, accountName, roleName); err != nil {
-		fmt.Printf("Error: %v\n", err)
+		fmt.Printf("\n✗ Error: %v\n", err)
 		os.Exit(1)
 	}
 }
