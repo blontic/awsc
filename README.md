@@ -9,6 +9,7 @@ A CLI tool for AWS SSO authentication, RDS port forwarding, EC2 sessions, and Se
 ## Features
 
 - **SSO Authentication** - Seamless AWS SSO login with account/role selection and credential caching
+- **AWS Console Access** - Open AWS Management Console in your browser for the currently logged-in account
 - **RDS Port Forwarding** - Connect to private RDS instances and Aurora clusters with automatic bastion host discovery and security group analysis
 - **EC2 Sessions** - Interactive SSH sessions via AWS Systems Manager with automatic SSM agent detection
 - **Windows RDP** - Port forwarding for Windows instances with RDP protocol support
@@ -110,6 +111,13 @@ All commands support both interactive selection and direct parameter access:
 ./awsc login --force           # Force browser re-authentication
 ./awsc login --account my-account --role my-role  # Login to specific account and role directly
 
+# AWS Console Access
+./awsc console                 # Open AWS console home for current account
+./awsc console --service ec2   # Open specific AWS service console (e.g., EC2, S3, RDS)
+./awsc console --service s3    # Open S3 console
+./awsc console -s              # Switch account first, then open console
+./awsc console -s --service rds  # Switch account, then open RDS console
+
 # RDS Port Forwarding
 ./awsc rds connect             # List and select RDS instances and Aurora clusters interactively
 ./awsc rds connect --name my-db-instance  # Connect to specific RDS instance directly
@@ -137,6 +145,11 @@ All commands support both interactive selection and direct parameter access:
 # Secrets Manager
 ./awsc secrets show            # List and select secrets interactively
 ./awsc secrets show --name my-secret  # Show specific secret directly
+
+# AWS Console
+./awsc console                 # Open AWS console home page
+./awsc console --service lambda  # Open Lambda service console
+./awsc console --service dynamodb  # Open DynamoDB service console
 
 # Configuration
 ./awsc config init             # Initial setup
@@ -178,6 +191,7 @@ All resource commands follow a consistent pattern:
 ./awsc ec2 connect -s --instance-id i-123
 ./awsc ec2 rdp -s --instance-id i-456
 ./awsc opensearch connect -s --name prod-opensearch
+./awsc console -s --service ec2  # Switch account then open EC2 console
 
 # Combine flags
 ./awsc --verbose --region us-west-2 rds connect --name production-db

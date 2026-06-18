@@ -6,11 +6,8 @@ import (
 	"crypto/sha1"
 	"encoding/json"
 	"fmt"
-
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
@@ -212,47 +209,9 @@ func (c *CredentialsManager) saveTokenToCache(startURL, ssoRegion string, access
 	return os.WriteFile(cacheFile, data, 0600)
 }
 
+// openBrowser is a wrapper for OpenBrowser to maintain backward compatibility
 func openBrowser(url string) error {
-	var cmd string
-	var args []string
-
-	switch runtime.GOOS {
-	case "windows":
-		cmd = "cmd"
-		args = []string{"/c", "start", ""}
-	case "darwin":
-		cmd = "open"
-	default: // "linux", "freebsd", "openbsd", "netbsd"
-		// Check if running in WSL
-		if isWSL() {
-			// Use Windows browser from WSL
-			// Note: empty string after 'start' is the title parameter
-			cmd = "cmd.exe"
-			args = []string{"/c", "start", ""}
-		} else {
-			cmd = "xdg-open"
-		}
-	}
-	args = append(args, url)
-	return exec.Command(cmd, args...).Start()
-}
-
-// isWSL checks if the current environment is Windows Subsystem for Linux
-func isWSL() bool {
-	// Check for WSL-specific environment variables
-	if os.Getenv("WSL_DISTRO_NAME") != "" || os.Getenv("WSL_INTEROP") != "" {
-		return true
-	}
-	
-	// Check /proc/version for Microsoft/WSL
-	if data, err := os.ReadFile("/proc/version"); err == nil {
-		version := strings.ToLower(string(data))
-		if strings.Contains(version, "microsoft") || strings.Contains(version, "wsl") {
-			return true
-		}
-	}
-	
-	return false
+	return OpenBrowser(url)
 }
 
 func isRetryableError(err error) bool {
