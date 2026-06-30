@@ -1,4 +1,4 @@
-.PHONY: build clean test test-coverage run deps install build-all fmt mocks vuln
+.PHONY: build clean test test-coverage run deps install fmt mocks vuln snapshot
 
 # Version variables
 VERSION ?= $(shell git describe --tags --always --dirty)
@@ -10,16 +10,15 @@ LDFLAGS = -s -w -X github.com/blontic/awsc/cmd.Version=$(VERSION) -X github.com/
 build:
 	go build -ldflags "$(LDFLAGS)" -o awsc main.go
 
-# Build for multiple platforms
-build-all:
-	mkdir -p bin
-	GOOS=darwin GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o bin/awsc-darwin-amd64 main.go
-	GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o bin/awsc-darwin-arm64 main.go
-	GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o bin/awsc-linux-amd64 main.go
+# Build a full multi-platform release locally (no publish) using GoReleaser.
+# Cross-compilation and packaging for releases is owned by .goreleaser.yaml;
+# requires the goreleaser CLI (brew install goreleaser).
+snapshot:
+	goreleaser release --snapshot --clean
 
 # Clean build artifacts
 clean:
-	rm -rf bin/ awsc
+	rm -rf bin/ dist/ awsc
 
 # Run tests
 test:

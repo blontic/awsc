@@ -1,0 +1,93 @@
+# GoReleaser configuration (https://goreleaser.com)
+# Build locally with:  goreleaser release --snapshot --clean
+version: 2
+
+project_name: awsc
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: awsc
+    main: ./main.go
+    binary: awsc
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    # Inject version metadata into the cmd package (matches the Makefile).
+    ldflags:
+      - -s -w
+      - -X github.com/blontic/awsc/cmd.Version={{ .Version }}
+      - -X github.com/blontic/awsc/cmd.Commit={{ .ShortCommit }}
+      - -X github.com/blontic/awsc/cmd.Date={{ .Date }}
+
+archives:
+  - id: awsc
+    # Produces e.g. awsc_0.4.1_darwin_arm64.tar.gz containing a binary named "awsc".
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    formats:
+      - tar.gz
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^style:"
+      - "^chore:"
+
+release:
+  # Mirrors the previous workflow: GitHub release with generated notes.
+  draft: false
+  prerelease: auto
+
+# Homebrew Cask. Publishes/updates a cask in github.com/blontic/homebrew-tap on
+# every (non-prerelease) tag. Requires a HOMEBREW_TAP_TOKEN secret with write
+# access to that repo (mapped as env in .github/workflows/release.yml).
+#
+# Users install with:  brew install blontic/tap/awsc
+#              update:  brew upgrade --cask awsc
+homebrew_casks:
+  - name: awsc
+    repository:
+      owner: blontic
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: "https://github.com/blontic/awsc"
+    description: "CLI for AWS SSO auth, RDS/EC2/OpenSearch port forwarding via SSM, and Secrets Manager"
+    # Helps `brew audit` since the download host (github.com) differs from homepage.
+    url:
+      verified: "github.com/blontic/awsc"
+    # Don't update the tap for prerelease/snapshot tags.
+    skip_upload: auto
+    # session-manager-plugin ships as its own Homebrew cask, so it can't be a
+    # declared dependency; point users at it instead.
+    caveats: |
+      RDS/EC2/OpenSearch port forwarding requires the AWS Session Manager Plugin:
+        brew install --cask session-manager-plugin
+    # The binary is not signed/notarized, so strip the quarantine flag on install
+    # to avoid Gatekeeper blocking it.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/awsc"]
+          end

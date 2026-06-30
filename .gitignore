@@ -4,6 +4,7 @@
 # Build artifacts
 awsc
 bin/
+dist/
 
 # Go
 *.exe
