@@ -197,9 +197,9 @@ func (e *EC2Manager) RunRDP(ctx context.Context, instanceId string, localPort in
 
 		// Instance not found or not selectable
 		if targetInstance == nil {
-			return fmt.Errorf("Windows instance '%s' not found", instanceId)
+			return fmt.Errorf("no Windows instance '%s' found", instanceId)
 		} else {
-			return fmt.Errorf("Windows instance '%s' is not available for RDP (state: %s)", instanceId, targetInstance.State)
+			return fmt.Errorf("instance %q is not available for RDP (state: %s)", instanceId, targetInstance.State)
 		}
 	}
 
