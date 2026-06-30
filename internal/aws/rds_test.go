@@ -269,11 +269,11 @@ func TestRDSManager_canConnectWithCachedRules(t *testing.T) {
 	manager := &RDSManager{}
 
 	tests := []struct {
-		name          string
-		ec2SGs        []types.GroupIdentifier
-		sgRulesCache  map[string][]types.IpPermission
-		port          int32
-		expected      bool
+		name         string
+		ec2SGs       []types.GroupIdentifier
+		sgRulesCache map[string][]types.IpPermission
+		port         int32
+		expected     bool
 	}{
 		{
 			name:   "security group allows access from EC2 SG",

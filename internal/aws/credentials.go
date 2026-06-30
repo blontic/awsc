@@ -243,7 +243,7 @@ func isWSL() bool {
 	if os.Getenv("WSL_DISTRO_NAME") != "" || os.Getenv("WSL_INTEROP") != "" {
 		return true
 	}
-	
+
 	// Check /proc/version for Microsoft/WSL
 	if data, err := os.ReadFile("/proc/version"); err == nil {
 		version := strings.ToLower(string(data))
@@ -251,7 +251,7 @@ func isWSL() bool {
 			return true
 		}
 	}
-	
+
 	return false
 }
 
