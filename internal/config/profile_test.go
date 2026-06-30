@@ -153,6 +153,39 @@ func TestWriteProfile_UpdateExisting(t *testing.T) {
 	}
 }
 
+func TestWriteProfile_RejectsInjection(t *testing.T) {
+	tempDir := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempDir)
+	defer os.Setenv("HOME", originalHome)
+
+	creds := &types.RoleCredentials{
+		AccessKeyId:     aws.String("AKIATEST123456789"),
+		SecretAccessKey: aws.String("test-secret-key"),
+		SessionToken:    aws.String("test-session-token"),
+	}
+
+	tests := []struct {
+		name        string
+		accountName string
+		accountID   string
+		roleName    string
+	}{
+		{name: "newline in account name", accountName: "evil\n[profile hacked]", accountID: "123456789012", roleName: "Role"},
+		{name: "carriage return in role", accountName: "acct", accountID: "123456789012", roleName: "Role\raws_access_key_id = AKIA"},
+		{name: "brackets in account name", accountName: "a]cct[", accountID: "123456789012", roleName: "Role"},
+		{name: "newline in account id", accountName: "acct", accountID: "123\n456", roleName: "Role"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := WriteProfile(tt.accountName, tt.accountID, tt.roleName, creds); err == nil {
+				t.Errorf("expected WriteProfile to reject %s, got nil error", tt.name)
+			}
+		})
+	}
+}
+
 func TestRemoveProfileSection(t *testing.T) {
 	content := `[profile awsc-account1]
 aws_access_key_id = KEY1

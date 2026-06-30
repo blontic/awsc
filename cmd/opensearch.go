@@ -39,6 +39,11 @@ func init() {
 func runOpenSearchConnect(cmd *cobra.Command, args []string) {
 	ctx := context.Background()
 
+	if err := validateLocalPort(opensearchLocalPort); err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
+	}
+
 	// Track if we just authenticated (to avoid double-login with -s flag)
 	justAuthenticated := false
 

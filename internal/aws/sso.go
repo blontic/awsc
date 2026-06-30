@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sso"
 	"github.com/aws/aws-sdk-go-v2/service/sso/types"
 	awscconfig "github.com/blontic/awsc/internal/config"
@@ -169,7 +170,7 @@ func (s *SSOManager) RunLogin(ctx context.Context, force bool, accountName, role
 func (s *SSOManager) handleAccountRoleSelection(ctx context.Context, accessToken string, accounts []types.AccountInfo, accountName, roleName string) error {
 	// Sort accounts alphabetically
 	sort.Slice(accounts, func(i, j int) bool {
-		return *accounts[i].AccountName < *accounts[j].AccountName
+		return aws.ToString(accounts[i].AccountName) < aws.ToString(accounts[j].AccountName)
 	})
 
 	var selectedAccount types.AccountInfo
@@ -178,7 +179,7 @@ func (s *SSOManager) handleAccountRoleSelection(ctx context.Context, accessToken
 	// If account name provided, try to find exact match
 	if accountName != "" {
 		for i, account := range accounts {
-			if strings.EqualFold(*account.AccountName, accountName) {
+			if strings.EqualFold(aws.ToString(account.AccountName), accountName) {
 				selectedAccount = account
 				selectedAccountIndex = i
 				break
@@ -187,7 +188,7 @@ func (s *SSOManager) handleAccountRoleSelection(ctx context.Context, accessToken
 		if selectedAccountIndex == -1 {
 			return fmt.Errorf("account '%s' not found", accountName)
 		} else {
-			fmt.Printf("Found account: %s\n", *selectedAccount.AccountName)
+			fmt.Printf("Found account: %s\n", aws.ToString(selectedAccount.AccountName))
 		}
 	}
 
@@ -196,7 +197,7 @@ func (s *SSOManager) handleAccountRoleSelection(ctx context.Context, accessToken
 		// Create account options
 		accountOptions := make([]string, len(accounts))
 		for i, account := range accounts {
-			accountOptions[i] = fmt.Sprintf("%s (%s)", *account.AccountName, *account.AccountId)
+			accountOptions[i] = fmt.Sprintf("%s (%s)", aws.ToString(account.AccountName), aws.ToString(account.AccountId))
 		}
 
 		// Interactive account selection
@@ -209,10 +210,10 @@ func (s *SSOManager) handleAccountRoleSelection(ctx context.Context, accessToken
 		}
 		selectedAccount = accounts[selectedAccountIndex]
 	}
-	fmt.Printf("✓ Selected: %s\n", *selectedAccount.AccountName)
+	fmt.Printf("✓ Selected: %s\n", aws.ToString(selectedAccount.AccountName))
 
 	// List roles
-	roles, err := s.ListRoles(ctx, accessToken, *selectedAccount.AccountId)
+	roles, err := s.ListRoles(ctx, accessToken, aws.ToString(selectedAccount.AccountId))
 	if err != nil {
 		return fmt.Errorf("error listing roles: %v", err)
 	}
@@ -223,7 +224,7 @@ func (s *SSOManager) handleAccountRoleSelection(ctx context.Context, accessToken
 
 	// Sort roles alphabetically
 	sort.Slice(roles, func(i, j int) bool {
-		return *roles[i].RoleName < *roles[j].RoleName
+		return aws.ToString(roles[i].RoleName) < aws.ToString(roles[j].RoleName)
 	})
 
 	var selectedRole types.RoleInfo
@@ -232,16 +233,16 @@ func (s *SSOManager) handleAccountRoleSelection(ctx context.Context, accessToken
 	// If role name provided, try to find exact match
 	if roleName != "" {
 		for i, role := range roles {
-			if strings.EqualFold(*role.RoleName, roleName) {
+			if strings.EqualFold(aws.ToString(role.RoleName), roleName) {
 				selectedRole = role
 				selectedRoleIndex = i
 				break
 			}
 		}
 		if selectedRoleIndex == -1 {
-			return fmt.Errorf("role '%s' not found in account %s", roleName, *selectedAccount.AccountName)
+			return fmt.Errorf("role '%s' not found in account %s", roleName, aws.ToString(selectedAccount.AccountName))
 		} else {
-			fmt.Printf("Found role: %s\n", *selectedRole.RoleName)
+			fmt.Printf("Found role: %s\n", aws.ToString(selectedRole.RoleName))
 		}
 	}
 
@@ -250,11 +251,11 @@ func (s *SSOManager) handleAccountRoleSelection(ctx context.Context, accessToken
 		// Create role options
 		roleOptions := make([]string, len(roles))
 		for i, role := range roles {
-			roleOptions[i] = *role.RoleName
+			roleOptions[i] = aws.ToString(role.RoleName)
 		}
 
 		// Interactive role selection
-		selectedRoleIndex, err := ui.RunSelector(fmt.Sprintf("Select role for %s:", *selectedAccount.AccountName), roleOptions)
+		selectedRoleIndex, err := ui.RunSelector(fmt.Sprintf("Select role for %s:", aws.ToString(selectedAccount.AccountName)), roleOptions)
 		if err != nil {
 			return fmt.Errorf("error selecting role: %v", err)
 		}
@@ -263,32 +264,34 @@ func (s *SSOManager) handleAccountRoleSelection(ctx context.Context, accessToken
 		}
 		selectedRole = roles[selectedRoleIndex]
 	}
-	fmt.Printf("✓ Selected: %s\n", *selectedRole.RoleName)
+	fmt.Printf("✓ Selected: %s\n", aws.ToString(selectedRole.RoleName))
 
 	// Get credentials (AWS SSO automatically uses max duration for the role)
-	creds, err := s.GetRoleCredentials(ctx, accessToken, *selectedAccount.AccountId, *selectedRole.RoleName)
+	creds, err := s.GetRoleCredentials(ctx, accessToken, aws.ToString(selectedAccount.AccountId), aws.ToString(selectedRole.RoleName))
 	if err != nil {
 		return fmt.Errorf("error getting role credentials: %v", err)
 	}
 
 	// Write profile to ~/.aws/config
-	profileName, err := awscconfig.WriteProfile(*selectedAccount.AccountName, *selectedAccount.AccountId, *selectedRole.RoleName, creds)
+	profileName, err := awscconfig.WriteProfile(aws.ToString(selectedAccount.AccountName), aws.ToString(selectedAccount.AccountId), aws.ToString(selectedRole.RoleName), creds)
 	if err != nil {
 		return fmt.Errorf("error writing profile: %v", err)
 	}
 
 	// Save session for current shell
 	ppid := os.Getppid()
-	if err := awscconfig.SaveSession(ppid, profileName, *selectedAccount.AccountId, *selectedAccount.AccountName, *selectedRole.RoleName); err != nil {
+	if err := awscconfig.SaveSession(ppid, profileName, aws.ToString(selectedAccount.AccountId), aws.ToString(selectedAccount.AccountName), aws.ToString(selectedRole.RoleName)); err != nil {
 		return fmt.Errorf("error saving session: %v", err)
 	}
 
 	// Cleanup stale sessions (best effort, ignore errors)
 	_ = awscconfig.CleanupStaleSessions()
 
-	fmt.Printf("\nSuccessfully authenticated to %s (%s) as %s\n", *selectedAccount.AccountName, *selectedAccount.AccountId, *selectedRole.RoleName)
-	fmt.Printf("\nTo use in this terminal:\n")
-	fmt.Printf("export AWS_PROFILE=%s\n", profileName)
-	fmt.Printf("export AWS_REGION=%s\n", viper.GetString("default_region"))
+	fmt.Printf("\nSuccessfully authenticated to %s (%s) as %s\n", aws.ToString(selectedAccount.AccountName), aws.ToString(selectedAccount.AccountId), aws.ToString(selectedRole.RoleName))
+	fmt.Printf("This terminal is now using profile %s automatically.\n", profileName)
+	fmt.Printf("\nTo pin this profile explicitly (e.g. in another terminal), export:\n")
+	fmt.Printf("  export AWSC_PROFILE=%s\n", profileName)
+	fmt.Printf("To use it with the AWS CLI:\n")
+	fmt.Printf("  aws --profile %s <command>\n", profileName)
 	return nil
 }

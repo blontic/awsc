@@ -255,15 +255,24 @@ func (e *EC2Manager) ListAllInstances(ctx context.Context) ([]EC2Instance, error
 	var instances []EC2Instance
 	for _, reservation := range allReservations {
 		for _, inst := range reservation.Instances {
-			isRunning := string(inst.State.Name) == "running"
+			if inst.InstanceId == nil {
+				continue
+			}
+			instanceID := *inst.InstanceId
+
+			var state string
+			if inst.State != nil {
+				state = string(inst.State.Name)
+			}
+			isRunning := state == "running"
 			// Only check SSM for running instances to avoid unnecessary API calls
-			hasSSM := isRunning && e.hasSSMAgent(ctx, *inst.InstanceId)
+			hasSSM := isRunning && e.hasSSMAgent(ctx, instanceID)
 
 			instances = append(instances, EC2Instance{
-				InstanceId:   *inst.InstanceId,
+				InstanceId:   instanceID,
 				Name:         e.getInstanceName(inst.Tags),
 				InstanceType: string(inst.InstanceType),
-				State:        string(inst.State.Name),
+				State:        state,
 				Platform:     e.getPlatform(inst),
 				IsSelectable: hasSSM, // Only running instances with SSM are selectable
 			})

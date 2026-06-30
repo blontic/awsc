@@ -64,10 +64,34 @@ func initViper(cfgFile, regionOverride string) {
 
 	viper.AutomaticEnv()
 
-	viper.ReadInConfig() // Ignore errors, config is optional
+	// Read config. If the user explicitly passed --config, a read failure is
+	// fatal; otherwise the config file is optional and errors are ignored.
+	if err := viper.ReadInConfig(); err != nil {
+		if cfgFile != "" {
+			fmt.Fprintf(os.Stderr, "Error reading config file '%s': %v\n", cfgFile, err)
+			os.Exit(1)
+		}
+	}
 
 	// Set region override if provided
 	if regionOverride != "" {
+		if !config.ValidateRegion(regionOverride) {
+			fmt.Fprintf(os.Stderr, "Error: invalid AWS region '%s'\n", regionOverride)
+			os.Exit(1)
+		}
 		viper.Set("default_region", regionOverride)
 	}
+}
+
+// validateLocalPort validates a user-supplied local port. A value of 0 is
+// allowed and signals "use the default port" to the caller; any other value
+// must be in the valid TCP port range.
+func validateLocalPort(port int) error {
+	if port == 0 {
+		return nil
+	}
+	if port < 1 || port > 65535 {
+		return fmt.Errorf("invalid local port %d: must be between 1 and 65535", port)
+	}
+	return nil
 }

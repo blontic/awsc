@@ -338,12 +338,12 @@ func (o *OpenSearchManager) FindBastionHosts(ctx context.Context, domain OpenSea
 
 			name := o.getInstanceName(instance.Tags)
 			ec2SgIds := o.getSecurityGroupIds(instance.SecurityGroups)
-			debug.Printf("Checking if EC2 instance %s (%s) can reach OpenSearch — EC2 security groups: %v\n", name, *instance.InstanceId, ec2SgIds)
+			debug.Printf("Checking if EC2 instance %s (%s) can reach OpenSearch — EC2 security groups: %v\n", name, aws.ToString(instance.InstanceId), ec2SgIds)
 
 			if o.canConnectWithCachedRules(instance.SecurityGroups, sgRulesCache, domain.Port) {
 				debug.Printf("✓ EC2 instance %s can connect to OpenSearch %s\n", name, domain.Name)
 				bastion := BastionHost{
-					InstanceId:       *instance.InstanceId,
+					InstanceId:       aws.ToString(instance.InstanceId),
 					Name:             name,
 					SecurityGroupIds: ec2SgIds,
 				}
@@ -469,7 +469,9 @@ func (o *OpenSearchManager) fetchSecurityGroupRules(ctx context.Context, sgIds [
 func (o *OpenSearchManager) canConnectWithCachedRules(ec2SecurityGroups []types.GroupIdentifier, sgRulesCache map[string][]types.IpPermission, port int32) bool {
 	ec2SgIds := make(map[string]bool)
 	for _, sg := range ec2SecurityGroups {
-		ec2SgIds[*sg.GroupId] = true
+		if sg.GroupId != nil {
+			ec2SgIds[*sg.GroupId] = true
+		}
 	}
 
 	for sgId, rules := range sgRulesCache {
@@ -531,7 +533,9 @@ func (o *OpenSearchManager) getInstanceName(tags []types.Tag) string {
 func (o *OpenSearchManager) getSecurityGroupIds(sgs []types.GroupIdentifier) []string {
 	var ids []string
 	for _, sg := range sgs {
-		ids = append(ids, *sg.GroupId)
+		if sg.GroupId != nil {
+			ids = append(ids, *sg.GroupId)
+		}
 	}
 	return ids
 }

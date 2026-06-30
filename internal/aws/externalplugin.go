@@ -54,24 +54,33 @@ func (pf *ExternalPluginForwarder) StartPortForwardingToRemoteHost(ctx context.C
 	}
 
 	// Prepare session response for plugin
-	responseJson, _ := json.Marshal(map[string]interface{}{
-		"SessionId":  *result.SessionId,
-		"StreamUrl":  *result.StreamUrl,
-		"TokenValue": *result.TokenValue,
-	})
+	responseJson, err := marshalSessionResponse(result)
+	if err != nil {
+		return err
+	}
 
 	// Prepare parameters for plugin
-	parametersJson := fmt.Sprintf(`{"Target":"%s","DocumentName":"AWS-StartPortForwardingSessionToRemoteHost","Parameters":{"host":["%s"],"portNumber":["%s"],"localPortNumber":["%s"]}}`,
-		bastionId, remoteHost, strconv.Itoa(remotePort), strconv.Itoa(localPort))
+	parametersJson, err := json.Marshal(pluginParameters{
+		Target:       bastionId,
+		DocumentName: "AWS-StartPortForwardingSessionToRemoteHost",
+		Parameters: map[string][]string{
+			"host":            {remoteHost},
+			"portNumber":      {strconv.Itoa(remotePort)},
+			"localPortNumber": {strconv.Itoa(localPort)},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to marshal session parameters: %w", err)
+	}
 
 	// Call session-manager-plugin with exact same arguments as AWS CLI
 	cmd := exec.CommandContext(ctx, "session-manager-plugin",
-		string(responseJson), // Session response
-		pf.region,            // Region
-		"StartSession",       // Operation
-		"",                   // Profile (empty)
-		parametersJson,       // Parameters
-		"")                   // Endpoint (empty)
+		string(responseJson),   // Session response
+		pf.region,              // Region
+		"StartSession",         // Operation
+		"",                     // Profile (empty)
+		string(parametersJson), // Parameters
+		"")                     // Endpoint (empty)
 
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -98,23 +107,25 @@ func (pf *ExternalPluginForwarder) StartInteractiveSession(ctx context.Context, 
 	}
 
 	// Prepare session response for plugin
-	responseJson, _ := json.Marshal(map[string]interface{}{
-		"SessionId":  *result.SessionId,
-		"StreamUrl":  *result.StreamUrl,
-		"TokenValue": *result.TokenValue,
-	})
+	responseJson, err := marshalSessionResponse(result)
+	if err != nil {
+		return err
+	}
 
 	// Prepare parameters for plugin
-	parametersJson := fmt.Sprintf(`{"Target":"%s"}`, instanceId)
+	parametersJson, err := json.Marshal(pluginParameters{Target: instanceId})
+	if err != nil {
+		return fmt.Errorf("failed to marshal session parameters: %w", err)
+	}
 
 	// Call session-manager-plugin with exact same arguments as AWS CLI
 	cmd := exec.CommandContext(ctx, "session-manager-plugin",
-		string(responseJson), // Session response
-		pf.region,            // Region
-		"StartSession",       // Operation
-		"",                   // Profile (empty)
-		parametersJson,       // Parameters
-		"")                   // Endpoint (empty)
+		string(responseJson),   // Session response
+		pf.region,              // Region
+		"StartSession",         // Operation
+		"",                     // Profile (empty)
+		string(parametersJson), // Parameters
+		"")                     // Endpoint (empty)
 
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -127,9 +138,7 @@ func (pf *ExternalPluginForwarder) StartInteractiveSession(ctx context.Context, 
 func (pf *ExternalPluginForwarder) checkPortAvailable(port int) error {
 	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
-		fmt.Printf("\nError: Port %d is already in use.\n", port)
-		fmt.Printf("Try using a different port with --local-port <port>\n")
-		os.Exit(1)
+		return fmt.Errorf("port %d is already in use (try a different port with --local-port <port>): %w", port, err)
 	}
 	listener.Close()
 	return nil
@@ -146,4 +155,38 @@ func (pf *ExternalPluginForwarder) handleMissingPlugin() error {
 
 	fmt.Printf("After installation, run the command again.\n")
 	return fmt.Errorf("session-manager-plugin not installed")
+}
+
+// sessionResponse is the JSON payload (StartSession result) passed as the first
+// argument to session-manager-plugin.
+type sessionResponse struct {
+	SessionId  string `json:"SessionId"`
+	StreamUrl  string `json:"StreamUrl"`
+	TokenValue string `json:"TokenValue"`
+}
+
+// pluginParameters is the JSON payload describing the session request passed as
+// the parameters argument to session-manager-plugin.
+type pluginParameters struct {
+	Target       string              `json:"Target"`
+	DocumentName string              `json:"DocumentName,omitempty"`
+	Parameters   map[string][]string `json:"Parameters,omitempty"`
+}
+
+// marshalSessionResponse converts an SSM StartSession result into the JSON the
+// plugin expects, validating the required pointers are present first.
+func marshalSessionResponse(result *ssm.StartSessionOutput) ([]byte, error) {
+	if result == nil || result.SessionId == nil || result.StreamUrl == nil || result.TokenValue == nil {
+		return nil, fmt.Errorf("incomplete StartSession response from AWS")
+	}
+
+	data, err := json.Marshal(sessionResponse{
+		SessionId:  *result.SessionId,
+		StreamUrl:  *result.StreamUrl,
+		TokenValue: *result.TokenValue,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal session response: %w", err)
+	}
+	return data, nil
 }

@@ -11,6 +11,19 @@ import (
 
 // WriteProfile writes AWS credentials to ~/.aws/config with the profile name awsc-{accountName}
 func WriteProfile(accountName, accountID, roleName string, creds *types.RoleCredentials) (string, error) {
+	// Guard against INI injection: account/role names are interpolated into the
+	// profile header and comments, so reject values containing newlines or
+	// section brackets that could forge additional config sections or keys.
+	if err := validateProfileField("account name", accountName); err != nil {
+		return "", err
+	}
+	if err := validateProfileField("account ID", accountID); err != nil {
+		return "", err
+	}
+	if err := validateProfileField("role name", roleName); err != nil {
+		return "", err
+	}
+
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("failed to get home directory: %w", err)
@@ -19,6 +32,10 @@ func WriteProfile(accountName, accountID, roleName string, creds *types.RoleCred
 	awsDir := filepath.Join(homeDir, ".aws")
 	if err := os.MkdirAll(awsDir, 0700); err != nil {
 		return "", fmt.Errorf("failed to create .aws directory: %w", err)
+	}
+
+	if creds == nil || creds.AccessKeyId == nil || creds.SecretAccessKey == nil || creds.SessionToken == nil {
+		return "", fmt.Errorf("incomplete role credentials returned by AWS")
 	}
 
 	configPath := filepath.Join(awsDir, "config")
@@ -95,4 +112,13 @@ func removeProfileSection(content, profileName string) string {
 	}
 
 	return strings.Join(result, "\n")
+}
+
+// validateProfileField rejects values that would break the structure of the
+// ~/.aws/config INI file (newlines, carriage returns, or section brackets).
+func validateProfileField(label, value string) error {
+	if strings.ContainsAny(value, "\r\n[]") {
+		return fmt.Errorf("invalid %s %q: contains illegal characters", label, value)
+	}
+	return nil
 }

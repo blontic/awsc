@@ -241,12 +241,17 @@ func (r *RDSManager) getDBInstances(ctx context.Context) ([]RDSInstance, error) 
 	var instances []RDSInstance
 	for _, db := range allDBInstances {
 		if db.DBInstanceStatus != nil && *db.DBInstanceStatus == "available" && db.DBClusterIdentifier == nil {
-			// Only include standalone instances (not part of a cluster)
+			// Only include standalone instances (not part of a cluster).
+			// Endpoint can be nil for instances that report "available" but
+			// have no resolvable endpoint yet; skip those rather than panic.
+			if db.Endpoint == nil || db.Endpoint.Address == nil || db.Endpoint.Port == nil {
+				continue
+			}
 			instances = append(instances, RDSInstance{
-				Identifier:   *db.DBInstanceIdentifier,
-				Endpoint:     *db.Endpoint.Address,
-				Port:         *db.Endpoint.Port,
-				Engine:       *db.Engine,
+				Identifier:   aws.ToString(db.DBInstanceIdentifier),
+				Endpoint:     aws.ToString(db.Endpoint.Address),
+				Port:         aws.ToInt32(db.Endpoint.Port),
+				Engine:       aws.ToString(db.Engine),
 				EndpointType: "instance",
 			})
 		}
@@ -294,27 +299,28 @@ func (r *RDSManager) getClusterEndpoints(ctx context.Context) ([]RDSInstance, er
 	var instances []RDSInstance
 	for _, cluster := range allClusters {
 		if cluster.Status != nil && *cluster.Status == "available" {
+			clusterID := aws.ToString(cluster.DBClusterIdentifier)
 			// Add cluster writer endpoint
 			if cluster.Endpoint != nil {
 				instances = append(instances, RDSInstance{
-					Identifier:   *cluster.DBClusterIdentifier + " (writer)",
-					Endpoint:     *cluster.Endpoint,
-					Port:         *cluster.Port,
-					Engine:       *cluster.Engine,
+					Identifier:   clusterID + " (writer)",
+					Endpoint:     aws.ToString(cluster.Endpoint),
+					Port:         aws.ToInt32(cluster.Port),
+					Engine:       aws.ToString(cluster.Engine),
 					EndpointType: "cluster-writer",
-					ClusterName:  *cluster.DBClusterIdentifier,
+					ClusterName:  clusterID,
 				})
 			}
 
 			// Add cluster reader endpoint
 			if cluster.ReaderEndpoint != nil {
 				instances = append(instances, RDSInstance{
-					Identifier:   *cluster.DBClusterIdentifier + " (reader)",
-					Endpoint:     *cluster.ReaderEndpoint,
-					Port:         *cluster.Port,
-					Engine:       *cluster.Engine,
+					Identifier:   clusterID + " (reader)",
+					Endpoint:     aws.ToString(cluster.ReaderEndpoint),
+					Port:         aws.ToInt32(cluster.Port),
+					Engine:       aws.ToString(cluster.Engine),
 					EndpointType: "cluster-reader",
-					ClusterName:  *cluster.DBClusterIdentifier,
+					ClusterName:  clusterID,
 				})
 			}
 		}
@@ -403,12 +409,12 @@ func (r *RDSManager) FindBastionHosts(ctx context.Context, rdsInstance RDSInstan
 
 			name := r.getInstanceName(instance.Tags)
 			ec2SgIds := r.getSecurityGroupIds(instance.SecurityGroups)
-			debug.Printf("Checking if EC2 instance %s (%s) can reach RDS — EC2 security groups: %v\n", name, *instance.InstanceId, ec2SgIds)
+			debug.Printf("Checking if EC2 instance %s (%s) can reach RDS — EC2 security groups: %v\n", name, aws.ToString(instance.InstanceId), ec2SgIds)
 
 			if r.canConnectWithCachedRules(instance.SecurityGroups, sgRulesCache, rdsInstance.Port) {
 				debug.Printf("✓ EC2 instance %s can connect to RDS %s\n", name, rdsInstance.Identifier)
 				bastion := BastionHost{
-					InstanceId:       *instance.InstanceId,
+					InstanceId:       aws.ToString(instance.InstanceId),
 					Name:             name,
 					SecurityGroupIds: ec2SgIds,
 				}
@@ -500,7 +506,9 @@ func (r *RDSManager) getRDSSecurityGroups(ctx context.Context, rdsInstance RDSIn
 
 		var sgIds []string
 		for _, sg := range result.DBClusters[0].VpcSecurityGroups {
-			sgIds = append(sgIds, *sg.VpcSecurityGroupId)
+			if sg.VpcSecurityGroupId != nil {
+				sgIds = append(sgIds, *sg.VpcSecurityGroupId)
+			}
 		}
 		return sgIds, nil
 	} else {
@@ -534,7 +542,9 @@ func (r *RDSManager) getRDSSecurityGroups(ctx context.Context, rdsInstance RDSIn
 
 		var sgIds []string
 		for _, sg := range result.DBInstances[0].VpcSecurityGroups {
-			sgIds = append(sgIds, *sg.VpcSecurityGroupId)
+			if sg.VpcSecurityGroupId != nil {
+				sgIds = append(sgIds, *sg.VpcSecurityGroupId)
+			}
 		}
 		return sgIds, nil
 	}
@@ -575,7 +585,9 @@ func (r *RDSManager) fetchSecurityGroupRules(ctx context.Context, sgIds []string
 func (r *RDSManager) canConnectWithCachedRules(ec2SecurityGroups []types.GroupIdentifier, sgRulesCache map[string][]types.IpPermission, port int32) bool {
 	ec2SgIds := make(map[string]bool)
 	for _, sg := range ec2SecurityGroups {
-		ec2SgIds[*sg.GroupId] = true
+		if sg.GroupId != nil {
+			ec2SgIds[*sg.GroupId] = true
+		}
 	}
 
 	for sgId, rules := range sgRulesCache {
@@ -637,7 +649,9 @@ func (r *RDSManager) getInstanceName(tags []types.Tag) string {
 func (r *RDSManager) getSecurityGroupIds(sgs []types.GroupIdentifier) []string {
 	var ids []string
 	for _, sg := range sgs {
-		ids = append(ids, *sg.GroupId)
+		if sg.GroupId != nil {
+			ids = append(ids, *sg.GroupId)
+		}
 	}
 	return ids
 }

@@ -194,3 +194,28 @@ func TestFlagUsage(t *testing.T) {
 		t.Error("Verbose flag should have usage description")
 	}
 }
+
+func TestValidateLocalPort(t *testing.T) {
+	tests := []struct {
+		name    string
+		port    int
+		wantErr bool
+	}{
+		{name: "zero means default", port: 0, wantErr: false},
+		{name: "valid low", port: 1, wantErr: false},
+		{name: "valid typical", port: 5432, wantErr: false},
+		{name: "valid high", port: 65535, wantErr: false},
+		{name: "negative", port: -1, wantErr: true},
+		{name: "too high", port: 65536, wantErr: true},
+		{name: "way too high (int32 wrap range)", port: 70000, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateLocalPort(tt.port)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateLocalPort(%d) error = %v, wantErr %v", tt.port, err, tt.wantErr)
+			}
+		})
+	}
+}
