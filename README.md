@@ -25,9 +25,20 @@ A CLI tool for AWS SSO authentication, RDS port forwarding, EC2 sessions, and Se
 
 ## Installation
 
+### Homebrew (macOS & Linux)
+
+Available from the [`blontic/homebrew-tap`](https://github.com/blontic/homebrew-tap) tap:
+
+```bash
+brew install blontic/tap/awsc
+brew upgrade --cask awsc
+```
+
+> Distributed as a Homebrew Cask. The install strips the macOS quarantine flag so the unsigned binary runs without a Gatekeeper prompt.
+
 ### Install script (macOS & Linux)
 
-Downloads the correct binary for your OS/architecture, verifies its checksum, and installs it to a directory on your `PATH`:
+For systems without Homebrew. Downloads the correct binary for your OS/architecture, verifies its checksum, and installs it to a directory on your `PATH`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/blontic/awsc/main/install.sh | sh
@@ -40,26 +51,6 @@ Options:
 
 **Updating:** re-run the same command — it installs the latest release over the existing one.
 
-### Manual download
-
-Grab the archive for your platform from the [latest release](https://github.com/blontic/awsc/releases/latest), extract it, and move the `awsc` binary onto your `PATH` (the binary inside the archive is already named `awsc`):
-
-```bash
-tar -xzf awsc_<version>_<os>_<arch>.tar.gz
-sudo mv awsc /usr/local/bin/
-```
-
-### Homebrew
-
-Available from the [`blontic/homebrew-tap`](https://github.com/blontic/homebrew-tap) tap (published on each release):
-
-```bash
-brew install blontic/tap/awsc
-brew upgrade --cask awsc
-```
-
-> Distributed as a Homebrew Cask. The install strips the macOS quarantine flag so the unsigned binary runs without a Gatekeeper prompt.
-
 ### Build from source
 
 Requires Go (see `go.mod` for the version). Produces `./awsc`:
@@ -67,6 +58,8 @@ Requires Go (see `go.mod` for the version). Produces `./awsc`:
 ```bash
 make build
 ```
+
+Alternatively, download an archive for your platform from the [latest release](https://github.com/blontic/awsc/releases/latest), extract it, and move the `awsc` binary onto your `PATH`.
 
 ## Setup
 
