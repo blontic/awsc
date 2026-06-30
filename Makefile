@@ -1,4 +1,4 @@
-.PHONY: build clean test test-coverage run deps install build-all fmt mocks
+.PHONY: build clean test test-coverage run deps install build-all fmt mocks vuln
 
 # Version variables
 VERSION ?= $(shell git describe --tags --always --dirty)
@@ -28,6 +28,10 @@ test:
 # Run tests with coverage
 test-coverage:
 	go test -cover ./...
+
+# Scan for known vulnerabilities in code and dependencies
+vuln:
+	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
 # Run the tool
 run:
