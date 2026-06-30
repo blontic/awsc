@@ -71,6 +71,25 @@ Alternatively, download an archive for your platform from the [latest release](h
 ./awsc login
 ```
 
+## Shell Completions
+
+When installed via Homebrew, shell completions (bash, zsh, fish) are set up automatically.
+
+For the install script or build-from-source, load them with `awsc completion <shell>`. For example:
+
+```bash
+# zsh (current shell)
+source <(awsc completion zsh)
+
+# zsh (persisted, macOS/Homebrew)
+awsc completion zsh > "$(brew --prefix)/share/zsh/site-functions/_awsc"
+
+# bash (persisted)
+awsc completion bash | sudo tee /etc/bash_completion.d/awsc > /dev/null
+```
+
+Run `awsc completion --help` for other shells.
+
 ## Multi-Profile Support
 
 AWSC supports multiple AWS accounts simultaneously using a hybrid approach:

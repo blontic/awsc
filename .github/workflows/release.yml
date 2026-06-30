@@ -29,5 +29,5 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Write access to github.com/blontic/homebrew-tap so the Homebrew
-          # formula is published/updated on each release.
+          # cask is published/updated on each release.
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

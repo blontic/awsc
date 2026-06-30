@@ -78,6 +78,16 @@ homebrew_casks:
       verified: "github.com/blontic/awsc"
     # Don't update the tap for prerelease/snapshot tags.
     skip_upload: auto
+    # Generate bash/zsh/fish completions at install time by running
+    # `awsc completion <shell>` (Cobra's built-in completion command).
+    generate_completions_from_executable:
+      args:
+        - completion
+      shell_parameter_format: cobra
+      shells:
+        - bash
+        - zsh
+        - fish
     # session-manager-plugin ships as its own Homebrew cask, so it can't be a
     # declared dependency; point users at it instead.
     caveats: |
