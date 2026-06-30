@@ -92,70 +92,27 @@ Run `awsc completion --help` for other shells.
 
 ## Multi-Profile Support
 
-AWSC supports multiple AWS accounts simultaneously using a hybrid approach:
-
-### Automatic Per-Terminal Sessions (PPID Tracking)
-
-Each terminal window automatically tracks its own AWS session:
+Work with multiple AWS accounts at once. Each terminal tracks its own session (by PPID), so different windows can use different accounts simultaneously:
 
 ```bash
 # Terminal 1
-$ ./awsc login
-# Select prod-account → Creates awsc-prod-account profile
-$ ./awsc ec2 connect
-# Automatically uses awsc-prod-account
+$ ./awsc login        # select prod-account → creates the awsc-prod-account profile
+$ ./awsc ec2 connect  # uses awsc-prod-account
 
-# Terminal 2 (different terminal window)
-$ ./awsc login
-# Select dev-account → Creates awsc-dev-account profile
-$ ./awsc rds connect
-# Automatically uses awsc-dev-account
-
-# Both terminals work independently!
+# Terminal 2
+$ ./awsc login        # select dev-account → creates the awsc-dev-account profile
+$ ./awsc rds connect  # uses awsc-dev-account
 ```
 
-### Explicit Profile Override
-
-Use the `AWSC_PROFILE` environment variable to explicitly set which profile to use:
+Override the active profile for a terminal with `AWSC_PROFILE`:
 
 ```bash
-# Override for specific terminal session
-$ export AWSC_PROFILE=awsc-prod-account
-$ ./awsc ec2 connect  # Uses awsc-prod-account
-$ ./awsc rds connect  # Still uses awsc-prod-account
-
-# Switch to different profile
-$ export AWSC_PROFILE=awsc-dev-account
-$ ./awsc secrets show  # Now uses awsc-dev-account
+export AWSC_PROFILE=awsc-prod-account
 ```
 
-### Automatic Error Recovery
-
-AWSC automatically handles authentication errors:
-
-- **Missing profile**: If the profile is deleted from `~/.aws/config`, awsc will detect it and prompt you to login again
-- **Expired credentials**: When credentials expire, awsc prompts for re-authentication
-- **No active session**: First-time users are automatically guided through login
-
-All commands automatically recover from authentication errors without manual intervention.
-
-### AWS CLI Integration
-
-All profiles created by AWSC can be used with the AWS CLI:
-
-```bash
-$ aws s3 ls --profile awsc-prod-account
-$ aws ec2 describe-instances --profile awsc-dev-account
-$ aws rds describe-db-instances --profile awsc-staging-account
-```
-
-### Profile Naming
-
-Profiles are automatically named `awsc-{accountName}` where `{accountName}` is your AWS account name. Credentials are stored in `~/.aws/config` and work until they expire.
-
-### Platform Support
-
-Multi-profile support works on **macOS and Linux only**. Windows users should use WSL (Windows Subsystem for Linux) for the best experience.
+- **Profiles** are written to `~/.aws/config` as `awsc-{accountName}` and work with the AWS CLI too (`aws s3 ls --profile awsc-prod-account`).
+- **Auth recovery** is automatic: missing profiles, expired credentials, and first-time use all prompt you through login without manual intervention.
+- **Platform**: macOS and Linux (PPID tracking is Unix-only; Windows users should use WSL).
 
 ## Commands
 
@@ -210,39 +167,23 @@ All resource commands follow a consistent pattern:
 
 ## Global Options
 
+These flags work with any command:
+
+| Flag | Description |
+| --- | --- |
+| `--region <region>` | Override the AWS region for this command |
+| `--config <path>` | Use an alternate config file |
+| `--verbose`, `-v` | Enable debug output |
+
+Resource commands (`rds`/`ec2`/`opensearch`) also accept `--switch-account`, `-s` to switch AWS account first using the existing SSO session.
+
 ```bash
-# Override AWS region for any command
-./awsc --region us-west-2 secrets show --name my-secret
-./awsc --region eu-west-1 rds connect --name my-db
-./awsc --region ap-southeast-1 ec2 connect --instance-id i-1234567890abcdef0
-./awsc --region us-west-2 opensearch connect --name my-domain
-# Use alternate config file
+./awsc --region us-west-2 rds connect --name my-db
 ./awsc --config ~/.awsc-dev/config.yaml login
-
-# Enable verbose debugging output
-./awsc --verbose rds connect --name my-db
-./awsc -v ec2 connect
-
-# Force re-authentication
-./awsc login --force
-
-# Direct login to specific account and role
-./awsc login --account production-account --role admin-role
-./awsc login --force --account dev-account --role developer-role
-
-# Switch AWS account before connecting (uses existing SSO session)
-./awsc rds connect --switch-account --name prod-db
-./awsc ec2 connect -s --instance-id i-123
-./awsc ec2 rdp -s --instance-id i-456
-./awsc opensearch connect -s --name prod-opensearch
-
-# Combine flags
-./awsc --verbose --region us-west-2 rds connect --name production-db
-./awsc --region ap-southeast-2 secrets show --name /prod/api-keys
-./awsc --verbose --region us-east-1 secrets show --name /prod/database-password
-./awsc -s --region us-west-2 rds connect --name prod-db  # Switch account + region
-./awsc --verbose --region eu-west-1 opensearch connect --name prod-search
+./awsc -s --region us-west-2 rds connect --name prod-db   # switch account + region
 ```
+
+Flags can be combined freely.
 
 ## Configuration
 
