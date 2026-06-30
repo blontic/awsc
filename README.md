@@ -23,6 +23,51 @@ A CLI tool for AWS SSO authentication, RDS port forwarding, EC2 sessions, and Se
   - macOS: `brew install --cask session-manager-plugin`
   - Linux: Download from AWS and install .deb package
 
+## Installation
+
+### Install script (macOS & Linux)
+
+Downloads the correct binary for your OS/architecture, verifies its checksum, and installs it to a directory on your `PATH`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/blontic/awsc/main/install.sh | sh
+```
+
+Options:
+
+- `AWSC_VERSION=v0.4.1` — install a specific release instead of the latest.
+- `AWSC_INSTALL_DIR=~/.local/bin` — install somewhere you own (no `sudo` needed).
+
+**Updating:** re-run the same command — it installs the latest release over the existing one.
+
+### Manual download
+
+Grab the archive for your platform from the [latest release](https://github.com/blontic/awsc/releases/latest), extract it, and move the `awsc` binary onto your `PATH` (the binary inside the archive is already named `awsc`):
+
+```bash
+tar -xzf awsc_<version>_<os>_<arch>.tar.gz
+sudo mv awsc /usr/local/bin/
+```
+
+### Homebrew
+
+Available from the [`blontic/homebrew-tap`](https://github.com/blontic/homebrew-tap) tap (published on each release):
+
+```bash
+brew install blontic/tap/awsc
+brew upgrade --cask awsc
+```
+
+> Distributed as a Homebrew Cask. The install strips the macOS quarantine flag so the unsigned binary runs without a Gatekeeper prompt.
+
+### Build from source
+
+Requires Go (see `go.mod` for the version). Produces `./awsc`:
+
+```bash
+make build
+```
+
 ## Setup
 
 ```bash
@@ -189,10 +234,34 @@ All resource commands follow a consistent pattern:
 
 ## Configuration
 
-Config stored at `~/.awsc/config.yaml`:
+Configuration is stored at `~/.awsc/config.yaml` and is created interactively by `awsc config init`. It contains three required values:
+
+| Key | Description | Example |
+| --- | --- | --- |
+| `sso.start_url` | Your AWS SSO start URL (`https://<org>.awsapps.com/start`) | `https://my-org.awsapps.com/start` |
+| `sso.region` | Region where AWS SSO / IAM Identity Center is configured | `us-east-1` |
+| `default_region` | Default region for RDS/EC2/OpenSearch/Secrets operations (overridable with `--region`) | `us-east-1` |
+
+Example `~/.awsc/config.yaml`:
+
+```yaml
+sso:
+  start_url: https://my-org.awsapps.com/start
+  region: us-east-1
+default_region: us-east-1
+```
+
+Use a different config file for a command with the global `--config` flag, and view the active configuration with `awsc config show`.
 
 ## Development
 
 ```bash
-make dev
+make dev          # mocks + deps + test + build
+make build        # build ./awsc (version injected via ldflags)
+make test         # go test ./...
+make vuln         # govulncheck vulnerability scan
+make mocks        # regenerate internal/aws/mocks (after changing a *Client interface)
 ```
+
+The only external runtime dependency is `session-manager-plugin` (used for SSM sessions and port forwarding); there is no dependency on the AWS CLI.
+
