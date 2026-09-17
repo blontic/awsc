@@ -30,7 +30,7 @@ test-coverage:
 
 # Scan for known vulnerabilities in code and dependencies
 vuln:
-	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+	go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
 
 # Run the tool
 run:
