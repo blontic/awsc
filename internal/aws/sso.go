@@ -288,10 +288,8 @@ func (s *SSOManager) handleAccountRoleSelection(ctx context.Context, accessToken
 	_ = awscconfig.CleanupStaleSessions()
 
 	fmt.Printf("\nSuccessfully authenticated to %s (%s) as %s\n", aws.ToString(selectedAccount.AccountName), aws.ToString(selectedAccount.AccountId), aws.ToString(selectedRole.RoleName))
-	fmt.Printf("This terminal is now using profile %s automatically.\n", profileName)
-	fmt.Printf("\nTo pin this profile explicitly (e.g. in another terminal), export:\n")
-	fmt.Printf("  export AWSC_PROFILE=%s\n", profileName)
-	fmt.Printf("To use it with the AWS CLI:\n")
-	fmt.Printf("  aws --profile %s <command>\n", profileName)
+	fmt.Printf("\nTo use it with the AWS CLI in this terminal:\n")
+	fmt.Printf("  export AWS_PROFILE=%s\n", profileName)
+	fmt.Printf("  export AWS_REGION=%s\n", viper.GetString("default_region"))
 	return nil
 }
