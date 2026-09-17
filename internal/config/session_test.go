@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -109,7 +110,7 @@ func TestCleanupStaleSessions(t *testing.T) {
 
 	// Create a session file for current process (should not be deleted)
 	currentPID := os.Getpid()
-	currentSessionFile := filepath.Join(sessionsDir, "session-"+string(rune(currentPID))+".json")
+	currentSessionFile := filepath.Join(sessionsDir, fmt.Sprintf("session-%d.json", currentPID))
 	if err := os.WriteFile(currentSessionFile, []byte(`{"profile_name":"current"}`), 0600); err != nil {
 		t.Fatalf("Failed to create current session file: %v", err)
 	}
