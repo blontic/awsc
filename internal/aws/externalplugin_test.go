@@ -112,3 +112,30 @@ func TestPluginParameters_PortForwardingJSON(t *testing.T) {
 		t.Errorf("host not round-tripped safely: %q", rt.Parameters["host"][0])
 	}
 }
+
+func TestInstanceForwardingRequest(t *testing.T) {
+	doc, params := instanceForwardingRequest(3389, 13389)
+
+	if doc != "AWS-StartPortForwardingSession" {
+		t.Errorf("unexpected document: %s", doc)
+	}
+	// Newer SSM agents reject forwarding to localhost via the remote-host document,
+	// so instance forwarding must not send a host parameter.
+	if _, ok := params["host"]; ok {
+		t.Errorf("host parameter must not be set, got %v", params["host"])
+	}
+	if params["portNumber"][0] != "3389" || params["localPortNumber"][0] != "13389" {
+		t.Errorf("unexpected ports: %v", params)
+	}
+}
+
+func TestRemoteHostForwardingRequest(t *testing.T) {
+	doc, params := remoteHostForwardingRequest("db.example.com", 5432, 15432)
+
+	if doc != "AWS-StartPortForwardingSessionToRemoteHost" {
+		t.Errorf("unexpected document: %s", doc)
+	}
+	if params["host"][0] != "db.example.com" || params["portNumber"][0] != "5432" || params["localPortNumber"][0] != "15432" {
+		t.Errorf("unexpected params: %v", params)
+	}
+}

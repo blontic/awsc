@@ -27,6 +27,34 @@ func NewExternalPluginForwarder(cfg aws.Config) *ExternalPluginForwarder {
 }
 
 func (pf *ExternalPluginForwarder) StartPortForwardingToRemoteHost(ctx context.Context, bastionId, remoteHost string, remotePort, localPort int) error {
+	doc, params := remoteHostForwardingRequest(remoteHost, remotePort, localPort)
+	return pf.startPortForwardingSession(ctx, bastionId, doc, params, localPort)
+}
+
+// StartPortForwarding forwards a local port to a port on the target instance itself.
+// Use this instead of StartPortForwardingToRemoteHost with "localhost", which newer
+// SSM agents reject.
+func (pf *ExternalPluginForwarder) StartPortForwarding(ctx context.Context, instanceId string, remotePort, localPort int) error {
+	doc, params := instanceForwardingRequest(remotePort, localPort)
+	return pf.startPortForwardingSession(ctx, instanceId, doc, params, localPort)
+}
+
+func remoteHostForwardingRequest(remoteHost string, remotePort, localPort int) (string, map[string][]string) {
+	return "AWS-StartPortForwardingSessionToRemoteHost", map[string][]string{
+		"host":            {remoteHost},
+		"portNumber":      {strconv.Itoa(remotePort)},
+		"localPortNumber": {strconv.Itoa(localPort)},
+	}
+}
+
+func instanceForwardingRequest(remotePort, localPort int) (string, map[string][]string) {
+	return "AWS-StartPortForwardingSession", map[string][]string{
+		"portNumber":      {strconv.Itoa(remotePort)},
+		"localPortNumber": {strconv.Itoa(localPort)},
+	}
+}
+
+func (pf *ExternalPluginForwarder) startPortForwardingSession(ctx context.Context, target, documentName string, params map[string][]string, localPort int) error {
 	// Check if session-manager-plugin is available
 	if _, err := exec.LookPath("session-manager-plugin"); err != nil {
 		return pf.handleMissingPlugin()
@@ -39,13 +67,9 @@ func (pf *ExternalPluginForwarder) StartPortForwardingToRemoteHost(ctx context.C
 
 	// Start SSM session
 	sessionInput := &ssm.StartSessionInput{
-		Target:       aws.String(bastionId),
-		DocumentName: aws.String("AWS-StartPortForwardingSessionToRemoteHost"),
-		Parameters: map[string][]string{
-			"host":            {remoteHost},
-			"portNumber":      {strconv.Itoa(remotePort)},
-			"localPortNumber": {strconv.Itoa(localPort)},
-		},
+		Target:       aws.String(target),
+		DocumentName: aws.String(documentName),
+		Parameters:   params,
 	}
 
 	result, err := pf.ssmClient.StartSession(ctx, sessionInput)
@@ -61,13 +85,9 @@ func (pf *ExternalPluginForwarder) StartPortForwardingToRemoteHost(ctx context.C
 
 	// Prepare parameters for plugin
 	parametersJson, err := json.Marshal(pluginParameters{
-		Target:       bastionId,
-		DocumentName: "AWS-StartPortForwardingSessionToRemoteHost",
-		Parameters: map[string][]string{
-			"host":            {remoteHost},
-			"portNumber":      {strconv.Itoa(remotePort)},
-			"localPortNumber": {strconv.Itoa(localPort)},
-		},
+		Target:       target,
+		DocumentName: documentName,
+		Parameters:   params,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to marshal session parameters: %w", err)
