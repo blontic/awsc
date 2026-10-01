@@ -390,7 +390,7 @@ func (e *EC2Manager) startRDPPortForwarding(ctx context.Context, instanceId stri
 	fmt.Printf("Starting RDP port forwarding on localhost:%d...\n", localPort)
 
 	// Start port forwarding for RDP
-	return pf.StartPortForwardingToRemoteHost(ctx, instanceId, "localhost", int(remotePort), int(localPort))
+	return pf.StartPortForwarding(ctx, instanceId, int(remotePort), int(localPort))
 }
 
 func (e *EC2Manager) reloadClients(ctx context.Context) error {
