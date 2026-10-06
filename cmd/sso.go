@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/blontic/awsc/internal/aws"
+	"github.com/blontic/awsc/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -32,13 +33,12 @@ func runSSOLogin(cmd *cobra.Command, args []string) {
 
 	// Create SSO manager and run login
 	ssoManager, err := aws.NewSSOManager(ctx)
-	if err != nil {
-		fmt.Printf("\n✗ Error: %v\n", err)
-		os.Exit(1)
-	}
+	exitOnError(err)
+	exitOnError(ssoManager.RunLogin(ctx, forceAuth, accountName, roleName))
 
-	if err := ssoManager.RunLogin(ctx, forceAuth, accountName, roleName); err != nil {
-		fmt.Printf("\n✗ Error: %v\n", err)
-		os.Exit(1)
+	if session, err := config.GetCurrentSession(); err == nil {
+		fmt.Fprintf(os.Stderr, "To use it with the AWS CLI in this terminal:\n")
+		fmt.Fprintf(os.Stderr, "  export AWS_PROFILE=%s\n", session.ProfileName)
+		fmt.Fprintf(os.Stderr, "  export AWS_REGION=%s\n", config.Active().DefaultRegion)
 	}
 }

@@ -1,10 +1,14 @@
 package cmd
 
 import (
+	"github.com/blontic/awsc/internal/config"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 func TestRootCommand(t *testing.T) {
@@ -67,83 +71,84 @@ func TestExecute(t *testing.T) {
 	// The function is defined, so this test passes
 }
 
-func TestInitViper(t *testing.T) {
-	// Create temp directory for test
-	tempDir := t.TempDir()
+func TestApplyRegionOverride(t *testing.T) {
+	defer config.SetActive(config.Settings{})
+	org := config.Settings{Org: "alpha", StartURL: "https://alpha.awsapps.com/start", SSORegion: "us-east-1", DefaultRegion: "us-east-1"}
+	config.SetActive(org)
+	regionOverride = "eu-west-1"
+	defer func() { regionOverride = "" }()
 
-	// Mock home directory
-	originalHome := os.Getenv("HOME")
-	defer os.Setenv("HOME", originalHome)
-	os.Setenv("HOME", tempDir)
+	applyRegionOverride()
 
-	// Test initViper doesn't panic
-	defer func() {
-		if r := recover(); r != nil {
-			t.Errorf("initViper panicked: %v", r)
-		}
-	}()
-
-	// Create .awsc directory
-	awscDir := filepath.Join(tempDir, ".awsc")
-	os.MkdirAll(awscDir, 0755)
-
-	initViper("", "us-west-2")
+	want := org
+	want.DefaultRegion = "eu-west-1"
+	if got := config.Active(); got != want {
+		t.Errorf("--region should only change the default region: got %+v, want %+v", got, want)
+	}
 }
 
-func TestInitViper_WithConfigFile(t *testing.T) {
-	// Create temp config file
-	tempDir := t.TempDir()
-	configFile := filepath.Join(tempDir, "test-config.yaml")
-	os.WriteFile(configFile, []byte("test: value"), 0644)
-
-	// Test initViper with custom config file
-	defer func() {
-		if r := recover(); r != nil {
-			t.Errorf("initViper with config file panicked: %v", r)
-		}
-	}()
-
-	initViper(configFile, "")
+// Guards against reintroducing viper: settings live in config.Settings.
+func TestNoViperDependency(t *testing.T) {
+	data, err := os.ReadFile("../go.mod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "spf13/viper") {
+		t.Error("go.mod must not depend on spf13/viper; use config.Settings")
+	}
 }
 
-func TestInitViper_NonexistentConfigFile(t *testing.T) {
-	// Test that initViper exits when config file doesn't exist
+func TestSetupOrg_RemovedConfigFlag(t *testing.T) {
 	if os.Getenv("BE_CRASHER") == "1" {
-		initViper("/nonexistent/config.yaml", "")
+		removedConfigFlag = "/some/config.yaml"
+		setupOrg()
 		return
 	}
-
-	// Run the test in a subprocess
-	cmd := exec.Command(os.Args[0], "-test.run=TestInitViper_NonexistentConfigFile")
+	cmd := exec.Command(os.Args[0], "-test.run=TestSetupOrg_RemovedConfigFlag")
 	cmd.Env = append(os.Environ(), "BE_CRASHER=1")
-	err := cmd.Run()
-
-	// Expect the subprocess to exit with non-zero status
-	if e, ok := err.(*exec.ExitError); ok && !e.Success() {
-		return // Expected behavior
+	out, err := cmd.CombinedOutput()
+	if e, ok := err.(*exec.ExitError); !ok || e.ExitCode() != 1 {
+		t.Fatalf("expected exit code 1, got %v", err)
 	}
-	t.Fatalf("Expected initViper to exit when config file doesn't exist, but it didn't")
+	if !strings.Contains(string(out), "--config has been removed") {
+		t.Errorf("expected removal message, got:\n%s", out)
+	}
 }
 
-func TestInitViper_RegionOverride(t *testing.T) {
-	// Create temp directory for test
-	tempDir := t.TempDir()
+func TestNeedsOrg(t *testing.T) {
+	rootCmd.InitDefaultCompletionCmd()
+	completion, _, err := rootCmd.Find([]string{"completion", "zsh"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := map[*cobra.Command]bool{
+		versionCmd: false,
+		completion: false,
+		loginCmd:   true,
+		configCmd:  true,
+	}
+	for cmd, want := range cases {
+		if got := needsOrg(cmd); got != want {
+			t.Errorf("needsOrg(%s) = %v, want %v", cmd.CommandPath(), got, want)
+		}
+	}
+}
 
-	// Mock home directory
-	originalHome := os.Getenv("HOME")
-	defer os.Setenv("HOME", originalHome)
-	os.Setenv("HOME", tempDir)
+func TestVersionDoesNotTouchConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	defer func() { config.SetActive(config.Settings{}) }()
 
-	// Create .awsc directory
-	awscDir := filepath.Join(tempDir, ".awsc")
-	os.MkdirAll(awscDir, 0755)
-
-	// Test region override functionality
-	initViper("", "eu-west-1")
-
-	// Verify region was set (this is basic verification)
-	// In a real test, we'd check viper.Get("default_region")
-	// but that requires more complex viper state management
+	rootCmd.SetArgs([]string{"version"})
+	defer rootCmd.SetArgs(nil)
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{".awsc", ".aws"} {
+		if _, err := os.Stat(filepath.Join(home, dir)); !os.IsNotExist(err) {
+			t.Errorf("'awsc version' must not create ~/%s", dir)
+		}
+	}
 }
 
 func TestCobraInitialization(t *testing.T) {
@@ -179,9 +184,9 @@ func TestFlagDefaults(t *testing.T) {
 
 func TestFlagUsage(t *testing.T) {
 	// Test flag usage strings
-	configFlag := rootCmd.PersistentFlags().Lookup("config")
-	if configFlag.Usage == "" {
-		t.Error("Config flag should have usage description")
+	orgFlag := rootCmd.PersistentFlags().Lookup("org")
+	if orgFlag.Usage == "" {
+		t.Error("Org flag should have usage description")
 	}
 
 	regionFlag := rootCmd.PersistentFlags().Lookup("region")

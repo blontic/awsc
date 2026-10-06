@@ -7,17 +7,12 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/spf13/viper"
 )
 
-// LoadAWSConfig loads AWS config with region settings (no profile)
-// This is used for SSO operations which don't need credentials
+// LoadAWSConfig loads AWS config for IAM Identity Center (SSO/OIDC) calls,
+// which need no credentials and must use the org's SSO region.
 func LoadAWSConfig(ctx context.Context) (aws.Config, error) {
-	// Use region override if provided, otherwise use SSO region from config
-	region := viper.GetString("default_region")
-	if region == "" {
-		region = viper.GetString("sso.region")
-	}
+	region := active.SSORegion
 
 	// Explicitly use empty profile to ignore AWS_PROFILE environment variable
 	options := []func(*config.LoadOptions) error{
@@ -37,7 +32,7 @@ func LoadAWSConfig(ctx context.Context) (aws.Config, error) {
 // 3. Error if neither exists
 func LoadAWSConfigWithProfile(ctx context.Context) (aws.Config, error) {
 	// Use region override if provided, otherwise use default region from config
-	region := viper.GetString("default_region")
+	region := active.DefaultRegion
 
 	var profileName string
 
@@ -52,7 +47,14 @@ func LoadAWSConfigWithProfile(ctx context.Context) (aws.Config, error) {
 			// No session found
 			return aws.Config{}, fmt.Errorf("no active session")
 		}
-		profileName = session.ProfileName
+		// The terminal is logged in to a different org than the one requested
+		// (e.g. via --org): treat as not logged in so login runs for that org.
+		if session.Org != active.Org {
+			return aws.Config{}, fmt.Errorf("no active session")
+		}
+		if profileName, err = sessionProfile(session); err != nil {
+			return aws.Config{}, err
+		}
 	}
 
 	// Load config with the determined profile
@@ -65,4 +67,41 @@ func LoadAWSConfigWithProfile(ctx context.Context) (aws.Config, error) {
 	}
 
 	return config.LoadDefaultConfig(ctx, options...)
+}
+
+// sessionProfile returns the profile for the terminal's session. A profile
+// missing from ~/.aws/config (e.g. the file was deleted) is recreated, so
+// commands keep working without a new login while the SSO token is cached. If
+// the profile now points at a different account or role (another terminal
+// logged in to the same account with another role), the session is treated as
+// inactive so the user logs in again rather than silently switching role.
+func sessionProfile(session *SessionInfo) (string, error) {
+	accountID, roleName, found, err := lookupProfile(session.ProfileName)
+	if err != nil {
+		return "", err
+	}
+	if found {
+		if accountID != session.AccountID || roleName != session.RoleName {
+			return "", fmt.Errorf("no active session")
+		}
+		return session.ProfileName, nil
+	}
+
+	cfg, err := ReadFileConfig()
+	if err != nil {
+		return "", err
+	}
+	name, err := WriteProfile(cfg.Orgs, Profile{
+		Org:         session.Org,
+		AccountName: session.AccountName,
+		AccountID:   session.AccountID,
+		RoleName:    session.RoleName,
+	})
+	if err != nil {
+		return "", err
+	}
+	if name != session.ProfileName {
+		err = SaveSession(os.Getppid(), name, session.AccountID, session.AccountName, session.RoleName, session.Org)
+	}
+	return name, err
 }

@@ -2,8 +2,6 @@ package cmd
 
 import (
 	"context"
-	"fmt"
-	"os"
 
 	"github.com/blontic/awsc/internal/aws"
 	"github.com/spf13/cobra"
@@ -38,59 +36,12 @@ func init() {
 
 func runOpenSearchConnect(cmd *cobra.Command, args []string) {
 	ctx := context.Background()
+	exitOnError(validateLocalPort(opensearchLocalPort))
 
-	if err := validateLocalPort(opensearchLocalPort); err != nil {
-		fmt.Fprintf(os.Stderr, "%v\n", err)
-		os.Exit(1)
-	}
+	opensearchManager, err := newManager(ctx, func(ctx context.Context) (*aws.OpenSearchManager, error) {
+		return aws.NewOpenSearchManager(ctx)
+	}, opensearchSwitchAccount)
+	exitOnError(err)
 
-	// Track if we just authenticated (to avoid double-login with -s flag)
-	justAuthenticated := false
-
-	// Create OpenSearch manager
-	opensearchManager, err := aws.NewOpenSearchManager(ctx)
-	if err != nil {
-		// Check if this is a "no active session" error
-		if aws.IsAuthError(err) {
-			shouldReauth, reAuthErr := aws.PromptForReauth(ctx)
-			if reAuthErr != nil {
-				fmt.Printf("Error during re-authentication: %v\n", reAuthErr)
-				os.Exit(1)
-			}
-			if !shouldReauth {
-				fmt.Printf("Authentication cancelled\n")
-				os.Exit(1)
-			}
-			justAuthenticated = true
-			// Retry creating manager after successful login
-			opensearchManager, err = aws.NewOpenSearchManager(ctx)
-			if err != nil {
-				fmt.Printf("Error creating OpenSearch manager after re-authentication: %v\n", err)
-				os.Exit(1)
-			}
-		} else {
-			fmt.Printf("Error creating OpenSearch manager: %v\n", err)
-			os.Exit(1)
-		}
-	}
-
-	// Handle account switching if requested (skip if we just authenticated)
-	if opensearchSwitchAccount && !justAuthenticated {
-		if err := handleAccountSwitch(ctx); err != nil {
-			fmt.Printf("%v\n", err)
-			os.Exit(1)
-		}
-		// Recreate OpenSearch manager with new credentials
-		opensearchManager, err = aws.NewOpenSearchManager(ctx)
-		if err != nil {
-			fmt.Printf("Error creating OpenSearch manager after account switch: %v\n", err)
-			os.Exit(1)
-		}
-	}
-
-	// Run the OpenSearch connect workflow
-	if err := opensearchManager.RunConnect(ctx, opensearchDomainName, int32(opensearchLocalPort), opensearchListBastions); err != nil {
-		fmt.Printf("\n✗ Error: %v\n", err)
-		os.Exit(1)
-	}
+	exitOnError(opensearchManager.RunConnect(ctx, opensearchDomainName, int32(opensearchLocalPort), opensearchListBastions))
 }

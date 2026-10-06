@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -72,7 +73,7 @@ func (e *EC2Manager) RunConnect(ctx context.Context, instanceId string) error {
 	}
 
 	if len(allInstances) == 0 {
-		return fmt.Errorf("no EC2 instances found")
+		return notFoundError("EC2 instances", e.region)
 	}
 
 	// If instance ID provided, try to connect directly
@@ -86,7 +87,7 @@ func (e *EC2Manager) RunConnect(ctx context.Context, instanceId string) error {
 		}
 
 		if targetInstance != nil && targetInstance.IsSelectable {
-			fmt.Printf("Connecting to instance: %s (%s)\n", targetInstance.Name, targetInstance.InstanceId)
+			fmt.Fprintf(os.Stderr, "Connecting to instance: %s (%s)\n", targetInstance.Name, targetInstance.InstanceId)
 
 			// Start SSM session for all instances
 			return e.StartSSMSession(ctx, targetInstance.InstanceId)
@@ -94,7 +95,7 @@ func (e *EC2Manager) RunConnect(ctx context.Context, instanceId string) error {
 
 		// Instance not found or not selectable
 		if targetInstance == nil {
-			return fmt.Errorf("instance '%s' not found", instanceId)
+			return namedNotFoundError("instance", instanceId, e.region)
 		} else {
 			return fmt.Errorf("instance '%s' is not available (state: %s)", instanceId, targetInstance.State)
 		}
@@ -124,28 +125,28 @@ func (e *EC2Manager) RunConnect(ctx context.Context, instanceId string) error {
 	if !hasSelectable {
 		// Show stopped instances if any exist
 		if stoppedInstances > 0 {
-			fmt.Printf("\nFound %d stopped EC2 instance(s):\n", stoppedInstances)
+			fmt.Fprintf(os.Stderr, "\nFound %d stopped EC2 instance(s):\n", stoppedInstances)
 			for _, name := range stoppedInstanceNames {
-				fmt.Printf("- %s (stopped)\n", name)
+				fmt.Fprintf(os.Stderr, "- %s (stopped)\n", name)
 			}
-			fmt.Printf("\n")
+			fmt.Fprintf(os.Stderr, "\n")
 		}
 
 		if runningInstances == 0 {
-			fmt.Printf("No running EC2 instances found in region %s.\n", e.region)
-			fmt.Printf("To use EC2 sessions, you need a running EC2 instance with:\n")
-			fmt.Printf("- SSM agent installed and configured\n")
-			fmt.Printf("- Proper IAM permissions for SSM\n")
+			fmt.Fprintf(os.Stderr, "No running EC2 instances found in %s.\n", location(e.region))
+			fmt.Fprintf(os.Stderr, "To use EC2 sessions, you need a running EC2 instance with:\n")
+			fmt.Fprintf(os.Stderr, "- SSM agent installed and configured\n")
+			fmt.Fprintf(os.Stderr, "- Proper IAM permissions for SSM\n")
 			if stoppedInstances > 0 {
-				return fmt.Errorf("no running EC2 instances with SSM agent found - %d stopped instances available", stoppedInstances)
+				return fmt.Errorf("no running EC2 instances with SSM agent found in %s - %d stopped instances available", location(e.region), stoppedInstances)
 			}
-			return fmt.Errorf("no running EC2 instances found in region %s", e.region)
+			return notFoundError("running EC2 instances", e.region)
 		} else {
-			fmt.Printf("Found %d running EC2 instances but none have SSM agent configured.\n", runningInstances)
-			fmt.Printf("Please ensure your instances have:\n")
-			fmt.Printf("- SSM agent installed and running\n")
-			fmt.Printf("- Proper IAM role with SSM permissions\n")
-			return fmt.Errorf("no running EC2 instances with SSM agent found")
+			fmt.Fprintf(os.Stderr, "Found %d running EC2 instances but none have SSM agent configured.\n", runningInstances)
+			fmt.Fprintf(os.Stderr, "Please ensure your instances have:\n")
+			fmt.Fprintf(os.Stderr, "- SSM agent installed and running\n")
+			fmt.Fprintf(os.Stderr, "- Proper IAM role with SSM permissions\n")
+			return fmt.Errorf("no running EC2 instances with SSM agent found in %s", location(e.region))
 		}
 	}
 
@@ -177,7 +178,7 @@ func (e *EC2Manager) RunRDP(ctx context.Context, instanceId string, localPort in
 	}
 
 	if len(windowsInstances) == 0 {
-		return fmt.Errorf("no Windows EC2 instances found")
+		return notFoundError("Windows EC2 instances", e.region)
 	}
 
 	// If instance ID provided, try to connect directly
@@ -191,13 +192,13 @@ func (e *EC2Manager) RunRDP(ctx context.Context, instanceId string, localPort in
 		}
 
 		if targetInstance != nil && targetInstance.IsSelectable {
-			fmt.Printf("Starting RDP to instance: %s (%s)\n", targetInstance.Name, targetInstance.InstanceId)
+			fmt.Fprintf(os.Stderr, "Starting RDP to instance: %s (%s)\n", targetInstance.Name, targetInstance.InstanceId)
 			return e.startRDPPortForwarding(ctx, targetInstance.InstanceId, localPort)
 		}
 
 		// Instance not found or not selectable
 		if targetInstance == nil {
-			return fmt.Errorf("no Windows instance '%s' found", instanceId)
+			return namedNotFoundError("Windows instance", instanceId, e.region)
 		} else {
 			return fmt.Errorf("instance %q is not available for RDP (state: %s)", instanceId, targetInstance.State)
 		}
@@ -218,29 +219,13 @@ func (e *EC2Manager) ListAllInstances(ctx context.Context) ([]EC2Instance, error
 	var nextToken *string
 
 	for {
-		result, err := e.ec2Client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
-			NextToken: nextToken,
+		result, err := withReauth(ctx, e.reloadClients, func() (*ec2.DescribeInstancesOutput, error) {
+			return e.ec2Client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+				NextToken: nextToken,
+			})
 		})
 		if err != nil {
-			if IsAuthError(err) {
-				if shouldReauth, reAuthErr := PromptForReauth(ctx); shouldReauth && reAuthErr == nil {
-					// Reload all clients with fresh credentials
-					if reloadErr := e.reloadClients(ctx); reloadErr != nil {
-						return nil, reloadErr
-					}
-					// Retry after re-authentication
-					result, err = e.ec2Client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
-						NextToken: nextToken,
-					})
-					if err != nil {
-						return nil, err
-					}
-				} else {
-					return nil, err
-				}
-			} else {
-				return nil, err
-			}
+			return nil, err
 		}
 
 		allReservations = append(allReservations, result.Reservations...)
@@ -302,39 +287,18 @@ func (e *EC2Manager) StartSSMSession(ctx context.Context, instanceId string) err
 
 func (e *EC2Manager) hasSSMAgent(ctx context.Context, instanceId string) bool {
 	// Check if instance is managed by SSM
-	result, err := e.ssmClient.DescribeInstanceInformation(ctx, &ssm.DescribeInstanceInformationInput{
-		Filters: []ssmtypes.InstanceInformationStringFilter{
-			{
-				Key:    aws.String("InstanceIds"),
-				Values: []string{instanceId},
+	result, err := withReauth(ctx, e.reloadClients, func() (*ssm.DescribeInstanceInformationOutput, error) {
+		return e.ssmClient.DescribeInstanceInformation(ctx, &ssm.DescribeInstanceInformationInput{
+			Filters: []ssmtypes.InstanceInformationStringFilter{
+				{
+					Key:    aws.String("InstanceIds"),
+					Values: []string{instanceId},
+				},
 			},
-		},
+		})
 	})
 	if err != nil {
-		if IsAuthError(err) {
-			if shouldReauth, reAuthErr := PromptForReauth(ctx); shouldReauth && reAuthErr == nil {
-				// Reload all clients with fresh credentials
-				if reloadErr := e.reloadClients(ctx); reloadErr != nil {
-					return false
-				}
-				// Retry after re-authentication
-				result, err = e.ssmClient.DescribeInstanceInformation(ctx, &ssm.DescribeInstanceInformationInput{
-					Filters: []ssmtypes.InstanceInformationStringFilter{
-						{
-							Key:    aws.String("InstanceIds"),
-							Values: []string{instanceId},
-						},
-					},
-				})
-				if err != nil {
-					return false
-				}
-			} else {
-				return false
-			}
-		} else {
-			return false
-		}
+		return false
 	}
 
 	return len(result.InstanceInformationList) > 0
@@ -387,7 +351,7 @@ func (e *EC2Manager) startRDPPortForwarding(ctx context.Context, instanceId stri
 	pf := NewExternalPluginForwarder(cfg)
 	remotePort := 3389
 
-	fmt.Printf("Starting RDP port forwarding on localhost:%d...\n", localPort)
+	fmt.Fprintf(os.Stderr, "Starting RDP port forwarding on localhost:%d...\n", localPort)
 
 	// Start port forwarding for RDP
 	return pf.StartPortForwarding(ctx, instanceId, int(remotePort), int(localPort))
@@ -429,6 +393,6 @@ func (e *EC2Manager) selectInstance(title string, instances []EC2Instance) (*EC2
 	}
 
 	selectedInstance := instances[selectedIndex]
-	fmt.Printf("✓ Selected: %s\n", selectedInstance.Name)
+	fmt.Fprintf(os.Stderr, "✓ Selected: %s\n", selectedInstance.Name)
 	return &selectedInstance, nil
 }

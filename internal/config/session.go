@@ -14,10 +14,11 @@ type SessionInfo struct {
 	AccountID   string `json:"account_id"`
 	AccountName string `json:"account_name"`
 	RoleName    string `json:"role_name"`
+	Org         string `json:"org,omitempty"`
 }
 
 // SaveSession saves session information for the given PPID
-func SaveSession(ppid int, profileName, accountID, accountName, roleName string) error {
+func SaveSession(ppid int, profileName, accountID, accountName, roleName, org string) error {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("failed to get home directory: %w", err)
@@ -33,6 +34,7 @@ func SaveSession(ppid int, profileName, accountID, accountName, roleName string)
 		AccountID:   accountID,
 		AccountName: accountName,
 		RoleName:    roleName,
+		Org:         org,
 	}
 
 	data, err := json.MarshalIndent(session, "", "  ")
@@ -41,7 +43,7 @@ func SaveSession(ppid int, profileName, accountID, accountName, roleName string)
 	}
 
 	sessionFile := filepath.Join(sessionsDir, fmt.Sprintf("session-%d.json", ppid))
-	if err := os.WriteFile(sessionFile, data, 0600); err != nil {
+	if err := WriteFileAtomic(sessionFile, data, 0600, false); err != nil {
 		return fmt.Errorf("failed to write session file: %w", err)
 	}
 
@@ -75,6 +77,20 @@ func GetCurrentSession() (*SessionInfo, error) {
 	}
 
 	return &session, nil
+}
+
+// ClearCurrentSession logs the current shell (PPID) out of awsc by removing
+// its session file. A missing session is not an error.
+func ClearCurrentSession() error {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	sessionFile := filepath.Join(homeDir, ".awsc", "sessions", fmt.Sprintf("session-%d.json", os.Getppid()))
+	if err := os.Remove(sessionFile); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove session file: %w", err)
+	}
+	return nil
 }
 
 // CleanupStaleSessions removes session files for processes that no longer exist

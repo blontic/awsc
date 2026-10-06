@@ -165,15 +165,15 @@ func (pf *ExternalPluginForwarder) checkPortAvailable(port int) error {
 }
 
 func (pf *ExternalPluginForwarder) handleMissingPlugin() error {
-	fmt.Printf("\n❌ Session Manager Plugin not found\n\n")
-	fmt.Printf("The AWS Session Manager Plugin is required for SSM sessions.\n")
-	fmt.Printf("Please install it using one of these methods:\n\n")
+	fmt.Fprintf(os.Stderr, "\n❌ Session Manager Plugin not found\n\n")
+	fmt.Fprintf(os.Stderr, "The AWS Session Manager Plugin is required for SSM sessions.\n")
+	fmt.Fprintf(os.Stderr, "Please install it using one of these methods:\n\n")
 
-	fmt.Printf("📦 macOS: brew install --cask session-manager-plugin\n")
-	fmt.Printf("📦 Linux: curl -o plugin.deb https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb && sudo dpkg -i plugin.deb\n")
-	fmt.Printf("📦 Windows: Download from https://s3.amazonaws.com/session-manager-downloads/plugin/latest/windows/SessionManagerPluginSetup.exe\n\n")
+	fmt.Fprintf(os.Stderr, "📦 macOS: brew install --cask session-manager-plugin\n")
+	fmt.Fprintf(os.Stderr, "📦 Linux: curl -o plugin.deb https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb && sudo dpkg -i plugin.deb\n")
+	fmt.Fprintln(os.Stderr)
 
-	fmt.Printf("After installation, run the command again.\n")
+	fmt.Fprintf(os.Stderr, "After installation, run the command again.\n")
 	return fmt.Errorf("session-manager-plugin not installed")
 }
 

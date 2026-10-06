@@ -4,14 +4,15 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io/ioutil"
+	awscconfig "github.com/blontic/awsc/internal/config"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
-
-	"github.com/spf13/viper"
 )
 
 func TestNewCredentialsManager(t *testing.T) {
@@ -68,6 +69,46 @@ func TestIsAuthError(t *testing.T) {
 			expected: true,
 		},
 		{
+			name:     "no active session",
+			err:      fmt.Errorf("no active session"),
+			expected: true,
+		},
+		{
+			name:     "missing SSO token",
+			err:      fmt.Errorf("no SSO cache found, please run 'awsc login'"),
+			expected: true,
+		},
+		{
+			name:     "profile missing",
+			err:      fmt.Errorf("failed to get shared config profile, awsc-prod"),
+			expected: true,
+		},
+		{
+			name:     "SDK could not refresh SSO role credentials",
+			err:      fmt.Errorf("operation error RDS: DescribeDBInstances, get identity: get credentials: failed to refresh cached credentials, refresh cached SSO token failed, unable to refresh SSO token"),
+			expected: true,
+		},
+		{
+			name:     "wrapped no active session",
+			err:      fmt.Errorf("failed to load AWS config: %w", fmt.Errorf("no active session")),
+			expected: true,
+		},
+		{
+			name:     "DNS failure is not an auth error",
+			err:      fmt.Errorf("dial tcp: lookup rds.ap-southeast-2.amazonaws.com: no such host"),
+			expected: false,
+		},
+		{
+			name:     "malformed config is not an auth error",
+			err:      fmt.Errorf("failed to load AWS config: failed to parse ini file"),
+			expected: false,
+		},
+		{
+			name:     "throttling is not an auth error",
+			err:      fmt.Errorf("operation error EC2: DescribeInstances, api error Throttling: Rate exceeded"),
+			expected: false,
+		},
+		{
 			name:     "permission error (not auth error)",
 			err:      fmt.Errorf("User is not authorized to perform action"),
 			expected: false,
@@ -89,191 +130,138 @@ func TestIsAuthError(t *testing.T) {
 	}
 }
 
-func TestContains(t *testing.T) {
-	tests := []struct {
-		name     string
-		s        string
-		substr   string
-		expected bool
-	}{
-		{
-			name:     "substring found",
-			s:        "hello world",
-			substr:   "world",
-			expected: true,
-		},
-		{
-			name:     "substring not found",
-			s:        "hello world",
-			substr:   "foo",
-			expected: false,
-		},
-		{
-			name:     "empty substring",
-			s:        "hello world",
-			substr:   "",
-			expected: true,
-		},
-		{
-			name:     "empty string",
-			s:        "",
-			substr:   "foo",
-			expected: false,
-		},
+func writeTestCache(t *testing.T, cache ssoCache) string {
+	t.Helper()
+	path, err := ssoTokenCachePath()
+	if err != nil {
+		t.Fatalf("ssoTokenCachePath failed: %v", err)
 	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatalf("Failed to create cache directory: %v", err)
+	}
+	data, err := json.Marshal(cache)
+	if err != nil {
+		t.Fatalf("Failed to marshal cache: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatalf("Failed to write cache file: %v", err)
+	}
+	return path
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := contains(tt.s, tt.substr)
-			if result != tt.expected {
-				t.Errorf("Expected %v, got %v", tt.expected, result)
-			}
-		})
+func TestSSOTokenCachePath_MatchesAWSCLI(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("HOME", tempDir)
+	awscconfig.SetActive(awscconfig.Settings{Org: "my-org"})
+	defer func() { awscconfig.SetActive(awscconfig.Settings{}) }()
+
+	path, err := ssoTokenCachePath()
+	if err != nil {
+		t.Fatalf("ssoTokenCachePath failed: %v", err)
+	}
+	h := sha1.New()
+	h.Write([]byte("awsc-my-org"))
+	expected := filepath.Join(tempDir, ".aws", "sso", "cache", fmt.Sprintf("%x.json", h.Sum(nil)))
+	if path != expected {
+		t.Errorf("Expected %s, got %s", expected, path)
 	}
 }
 
 func TestCredentialsManager_GetCachedToken(t *testing.T) {
-	// Create temporary directory for test
-	tempDir := t.TempDir()
-
-	// Override home directory for test
-	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
-
-	// Set up SSO start URL for test
-	viper.Set("sso.start_url", "https://test.awsapps.com/start")
-	defer viper.Reset()
+	t.Setenv("HOME", t.TempDir())
+	awscconfig.SetActive(awscconfig.Settings{StartURL: "https://test.awsapps.com/start"})
+	defer func() { awscconfig.SetActive(awscconfig.Settings{}) }()
 
 	manager := &CredentialsManager{}
+	ctx := context.Background()
 
-	// Test no cache directory
-	_, err := manager.GetCachedToken()
-	if err == nil {
-		t.Error("Expected error when no cache directory exists")
+	if _, err := manager.GetCachedToken(ctx); err == nil || !IsAuthError(err) {
+		t.Errorf("Expected auth error when no cache exists, got %v", err)
 	}
 
-	// Create cache directory and valid token file
-	cacheDir := filepath.Join(tempDir, ".aws", "sso", "cache")
-	err = os.MkdirAll(cacheDir, 0700)
-	if err != nil {
-		t.Fatalf("Failed to create cache directory: %v", err)
-	}
-
-	// Create valid cache file with correct filename based on start URL
-	startURL := "https://test.awsapps.com/start"
-	cache := SSOCache{
+	writeTestCache(t, ssoCache{
 		AccessToken: "valid-token",
-		ExpiresAt:   time.Now().Add(1 * time.Hour),
+		ExpiresAt:   time.Now().UTC().Add(time.Hour).Format(time.RFC3339),
 		Region:      "us-east-1",
-		StartURL:    startURL,
-	}
+		StartURL:    "https://test.awsapps.com/start",
+	})
 
-	cacheData, err := json.Marshal(cache)
-	if err != nil {
-		t.Fatalf("Failed to marshal cache: %v", err)
-	}
-
-	// Create filename using same logic as saveTokenToCache
-	h := sha1.New()
-	h.Write([]byte(startURL))
-	filename := fmt.Sprintf("%x.json", h.Sum(nil))
-	cacheFile := filepath.Join(cacheDir, filename)
-	err = ioutil.WriteFile(cacheFile, cacheData, 0600)
-	if err != nil {
-		t.Fatalf("Failed to write cache file: %v", err)
-	}
-
-	// Test getting valid token
-	token, err := manager.GetCachedToken()
+	token, err := manager.GetCachedToken(ctx)
 	if err != nil {
 		t.Fatalf("GetCachedToken failed: %v", err)
 	}
 	if *token != "valid-token" {
 		t.Errorf("Expected 'valid-token', got %s", *token)
 	}
+}
 
-	// Test expired token - should still return token (no expiration check)
-	expiredCache := SSOCache{
+func TestCredentialsManager_GetCachedToken_ExpiredWithoutRefreshToken(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	awscconfig.SetActive(awscconfig.Settings{StartURL: "https://test.awsapps.com/start"})
+	defer func() { awscconfig.SetActive(awscconfig.Settings{}) }()
+
+	writeTestCache(t, ssoCache{
 		AccessToken: "expired-token",
-		ExpiresAt:   time.Now().Add(-1 * time.Hour),
+		ExpiresAt:   time.Now().UTC().Add(-time.Hour).Format(time.RFC3339),
 		Region:      "us-east-1",
 		StartURL:    "https://test.awsapps.com/start",
-	}
+	})
 
-	expiredData, err := json.Marshal(expiredCache)
-	if err != nil {
-		t.Fatalf("Failed to marshal expired cache: %v", err)
+	manager := &CredentialsManager{}
+	_, err := manager.GetCachedToken(context.Background())
+	if err == nil {
+		t.Fatal("Expected error for expired token without refresh token")
 	}
-
-	err = ioutil.WriteFile(cacheFile, expiredData, 0600)
-	if err != nil {
-		t.Fatalf("Failed to write expired cache file: %v", err)
-	}
-
-	// Should return token even if expired - let API calls handle expiration
-	token, err = manager.GetCachedToken()
-	if err != nil {
-		t.Fatalf("GetCachedToken should not fail for expired token: %v", err)
-	}
-	if *token != "expired-token" {
-		t.Errorf("Expected 'expired-token', got %s", *token)
+	if !IsAuthError(err) {
+		t.Errorf("Expected expired token error to be an auth error, got %v", err)
 	}
 }
 
-func TestCredentialsManager_saveTokenToCache(t *testing.T) {
-	// Create temporary directory for test
-	tempDir := t.TempDir()
+func TestSaveTokenToCache(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 
-	// Override home directory for test
-	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
-
-	manager := &CredentialsManager{}
-
-	startURL := "https://test.awsapps.com/start"
-	ssoRegion := "us-east-1"
-	accessToken := "test-access-token"
-	expiresIn := int32(3600)
-
-	err := manager.saveTokenToCache(startURL, ssoRegion, &accessToken, &expiresIn)
-	if err != nil {
+	in := ssoCache{
+		StartURL:              "https://test.awsapps.com/start",
+		Region:                "us-east-1",
+		AccessToken:           "test-access-token",
+		ExpiresAt:             time.Now().UTC().Add(time.Hour).Format(time.RFC3339),
+		RefreshToken:          "test-refresh-token",
+		ClientID:              "client-id",
+		ClientSecret:          "client-secret",
+		RegistrationExpiresAt: time.Now().UTC().Add(90 * 24 * time.Hour).Format(time.RFC3339),
+	}
+	if err := saveTokenToCache(in); err != nil {
 		t.Fatalf("saveTokenToCache failed: %v", err)
 	}
 
-	// Verify cache file was created
-	cacheDir := filepath.Join(tempDir, ".aws", "sso", "cache")
-	files, err := ioutil.ReadDir(cacheDir)
+	path, _ := ssoTokenCachePath()
+	info, err := os.Stat(path)
 	if err != nil {
-		t.Fatalf("Failed to read cache directory: %v", err)
+		t.Fatalf("cache file not created: %v", err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Errorf("Expected 0600 permissions, got %o", info.Mode().Perm())
 	}
 
-	if len(files) != 1 {
-		t.Fatalf("Expected 1 cache file, got %d", len(files))
+	got := loadCache()
+	if got == nil || *got != in {
+		t.Errorf("Round-tripped cache mismatch: got %+v, want %+v", got, in)
+	}
+}
+
+func TestSaveTokenToCache_TightensExistingPermissions(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	path := writeTestCache(t, ssoCache{AccessToken: "old"})
+	if err := os.Chmod(path, 0644); err != nil {
+		t.Fatal(err)
 	}
 
-	// Read and verify cache content
-	cacheFile := filepath.Join(cacheDir, files[0].Name())
-	data, err := ioutil.ReadFile(cacheFile)
-	if err != nil {
-		t.Fatalf("Failed to read cache file: %v", err)
+	if err := saveTokenToCache(ssoCache{AccessToken: "new"}); err != nil {
+		t.Fatalf("saveTokenToCache failed: %v", err)
 	}
-
-	var cache SSOCache
-	err = json.Unmarshal(data, &cache)
-	if err != nil {
-		t.Fatalf("Failed to unmarshal cache: %v", err)
-	}
-
-	if cache.AccessToken != accessToken {
-		t.Errorf("Expected access token %s, got %s", accessToken, cache.AccessToken)
-	}
-	if cache.Region != ssoRegion {
-		t.Errorf("Expected region %s, got %s", ssoRegion, cache.Region)
-	}
-	if cache.StartURL != startURL {
-		t.Errorf("Expected start URL %s, got %s", startURL, cache.StartURL)
+	info, _ := os.Stat(path)
+	if info.Mode().Perm() != 0600 {
+		t.Errorf("Expected 0600 permissions, got %o", info.Mode().Perm())
 	}
 }
 
@@ -320,44 +308,99 @@ func TestIsRetryableError(t *testing.T) {
 	}
 }
 
-func TestOpenBrowser(t *testing.T) {
-	// Test that openBrowser doesn't panic with invalid URL
-	err := openBrowser("invalid-url")
-	// We don't check for specific error as it varies by OS
-	// Just verify it doesn't panic
-	if err != nil {
-		t.Logf("openBrowser failed as expected: %v", err)
+func TestCredentialsManager_GetCachedToken_InvalidJSON(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	awscconfig.SetActive(awscconfig.Settings{StartURL: "https://test.awsapps.com/start"})
+	defer func() { awscconfig.SetActive(awscconfig.Settings{}) }()
+
+	path, _ := ssoTokenCachePath()
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("invalid json"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	manager := &CredentialsManager{}
+	if _, err := manager.GetCachedToken(context.Background()); err == nil {
+		t.Error("Expected error for invalid JSON")
 	}
 }
 
-func TestCredentialsManager_GetCachedToken_InvalidJSON(t *testing.T) {
-	// Create temporary directory for test
-	tempDir := t.TempDir()
-
-	// Override home directory for test
-	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
-
-	manager := &CredentialsManager{}
-
-	// Create cache directory and invalid JSON file
-	cacheDir := filepath.Join(tempDir, ".aws", "sso", "cache")
-	err := os.MkdirAll(cacheDir, 0700)
-	if err != nil {
-		t.Fatalf("Failed to create cache directory: %v", err)
+func TestBrowserCommand(t *testing.T) {
+	cases := []struct {
+		goos     string
+		wsl      bool
+		wantName string
+	}{
+		{"darwin", false, "open"},
+		{"linux", false, "xdg-open"},
+		{"linux", true, "cmd.exe"},
 	}
-
-	// Create invalid JSON cache file
-	cacheFile := filepath.Join(cacheDir, "invalid.json")
-	err = os.WriteFile(cacheFile, []byte("invalid json"), 0600)
-	if err != nil {
-		t.Fatalf("Failed to write invalid cache file: %v", err)
+	for _, c := range cases {
+		if name, _ := browserCommand(c.goos, c.wsl); name != c.wantName {
+			t.Errorf("browserCommand(%s, wsl=%v) = %s, want %s", c.goos, c.wsl, name, c.wantName)
+		}
 	}
+}
 
-	// Test getting token with invalid JSON
-	_, err = manager.GetCachedToken()
-	if err == nil {
-		t.Error("Expected error for invalid JSON")
+func TestOpenBrowser_RejectsNonHTTPS(t *testing.T) {
+	for _, u := range []string{"invalid-url", "http://example.com", "file:///etc/passwd", "https://"} {
+		if err := openBrowser(u); err == nil {
+			t.Errorf("openBrowser(%q) should be rejected", u)
+		}
 	}
+}
+
+func TestBrowserLogin(t *testing.T) {
+	const url, code = "https://x.awsapps.com/start/#/device?user_code=ABCD-EFGH", "ABCD-EFGH"
+
+	t.Run("interactive: shows code, waits for Enter, then opens", func(t *testing.T) {
+		var out strings.Builder
+		var opened []string
+		err := browserLogin(strings.NewReader("\n"), &out, true, "woodside", url, code, func(u string) error {
+			opened = append(opened, u)
+			return nil
+		})
+		if err != nil || len(opened) != 1 || opened[0] != url {
+			t.Fatalf("err=%v opened=%v", err, opened)
+		}
+		msg := out.String()
+		for _, want := range []string{`org "woodside"`, code, "Press Enter to open " + url} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("output missing %q:\n%s", want, msg)
+			}
+		}
+		if strings.Index(msg, code) > strings.Index(msg, "Press Enter") {
+			t.Error("the code should be shown before the browser is opened")
+		}
+	})
+
+	t.Run("interactive: no Enter (EOF) cancels without opening", func(t *testing.T) {
+		opened := false
+		err := browserLogin(strings.NewReader(""), io.Discard, true, "o", url, code, func(string) error { opened = true; return nil })
+		if err == nil || opened {
+			t.Errorf("err=%v opened=%v", err, opened)
+		}
+	})
+
+	t.Run("interactive: browser fails to open, URL still shown", func(t *testing.T) {
+		var out strings.Builder
+		err := browserLogin(strings.NewReader("\n"), &out, true, "o", url, code, func(string) error { return errors.New("no display") })
+		if err != nil || !strings.Contains(out.String(), "Could not open the browser") || !strings.Contains(out.String(), url) {
+			t.Errorf("err=%v out=%s", err, out.String())
+		}
+	})
+
+	t.Run("non-interactive: prints URL, does not wait or open", func(t *testing.T) {
+		var out strings.Builder
+		opened := false
+		err := browserLogin(strings.NewReader(""), &out, false, "o", url, code, func(string) error { opened = true; return nil })
+		if err != nil || opened {
+			t.Fatalf("err=%v opened=%v", err, opened)
+		}
+		if !strings.Contains(out.String(), "Open this URL to approve the login: "+url) || strings.Contains(out.String(), "Press Enter") {
+			t.Errorf("unexpected output:\n%s", out.String())
+		}
+	})
 }

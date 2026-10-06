@@ -3,12 +3,10 @@ package config
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
-
-	"github.com/spf13/viper"
 )
 
 // AWS regions list
@@ -47,15 +45,9 @@ var awsRegions = map[string]bool{
 // SSO URL regex pattern
 var ssoURLPattern = regexp.MustCompile(`^https://[a-zA-Z0-9-]+\.awsapps\.com/start/?$`)
 
-// validateRegion checks if the region is a valid AWS region
-func validateRegion(region string) bool {
-	return awsRegions[region]
-}
-
-// ValidateRegion reports whether region is a recognized AWS region. Exported for
-// validating the global --region flag.
+// ValidateRegion reports whether region is a recognized AWS region.
 func ValidateRegion(region string) bool {
-	return validateRegion(region)
+	return awsRegions[region]
 }
 
 // validateSSOURL checks if the SSO URL matches the expected pattern
@@ -63,126 +55,238 @@ func validateSSOURL(url string) bool {
 	return ssoURLPattern.MatchString(url)
 }
 
+// EnsureConfigExists runs first-time setup if no org is configured.
 func EnsureConfigExists() error {
-	// Check if config file exists
-	configPath := GetConfigPath()
-	if _, err := os.Stat(configPath); err == nil {
-		return nil // Config exists
+	cfg, err := ReadFileConfig()
+	if err != nil {
+		return err
 	}
-
-	fmt.Printf("Configuration file not found. Let's set up AWSC.\n\n")
-	return InitializeConfig()
+	if len(cfg.Orgs) > 0 {
+		return nil
+	}
+	fmt.Fprintf(os.Stderr, "No awsc configuration found. Let's set up AWSC.\n\n")
+	_, err = AddOrg("")
+	return err
 }
 
-func GetConfigPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".awsc", "config.yaml")
+// stdin is the source of interactive input (overridable in tests).
+var stdin io.Reader = os.Stdin
+
+func prompt(reader *bufio.Reader, label string) (string, error) {
+	fmt.Fprint(os.Stderr, label)
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(input), nil
 }
 
-func InitializeConfig() error {
-	reader := bufio.NewReader(os.Stdin)
-
-	// Get SSO Start URL
-	var ssoStartURL string
+// promptValid asks until valid accepts the answer.
+func promptValid(reader *bufio.Reader, label, invalidMsg string, valid func(string) bool) (string, error) {
 	for {
-		fmt.Print("SSO Start URL: ")
-		input, err := reader.ReadString('\n')
-		if err != nil {
-			return err
+		v, err := prompt(reader, label)
+		if err != nil || valid(v) {
+			return v, err
 		}
-		ssoStartURL = strings.TrimSpace(input)
-		if validateSSOURL(ssoStartURL) {
-			break
-		}
-		fmt.Printf("Invalid SSO URL format. Expected: https://your-org.awsapps.com/start\n")
+		fmt.Fprintln(os.Stderr, invalidMsg)
 	}
+}
 
-	// Get SSO Region
-	var ssoRegion string
-	for {
-		fmt.Print("SSO Region (e.g., us-east-1): ")
-		input, err := reader.ReadString('\n')
-		if err != nil {
-			return err
-		}
-		ssoRegion = strings.TrimSpace(input)
-		if validateRegion(ssoRegion) {
-			break
-		}
-		fmt.Printf("Invalid AWS region. Please enter a valid region like us-east-1, us-west-2, etc.\n")
+// promptOrgSettings interactively collects and validates an org's settings.
+func promptOrgSettings(reader *bufio.Reader) (OrgConfig, error) {
+	const badRegion = "Invalid AWS region. Please enter a valid region like us-east-1, us-west-2, etc."
+	var org OrgConfig
+	var err error
+	if org.SSO.StartURL, err = promptValid(reader, "SSO Start URL: ", "Invalid SSO URL format. Expected: https://your-org.awsapps.com/start", validateSSOURL); err != nil {
+		return org, err
 	}
-
-	// Get Default Region
-	var defaultRegion string
-	for {
-		fmt.Print("Default AWS Region (e.g., us-east-1): ")
-		input, err := reader.ReadString('\n')
-		if err != nil {
-			return err
-		}
-		defaultRegion = strings.TrimSpace(input)
-		if validateRegion(defaultRegion) {
-			break
-		}
-		fmt.Printf("Invalid AWS region. Please enter a valid region like us-east-1, us-west-2, etc.\n")
+	if org.SSO.Region, err = promptValid(reader, "SSO Region (e.g., us-east-1): ", badRegion, ValidateRegion); err != nil {
+		return org, err
 	}
+	org.DefaultRegion, err = promptValid(reader, "Default AWS Region (e.g., us-east-1): ", badRegion, ValidateRegion)
+	return org, err
+}
 
-	// Create config directory with secure permissions
-	configDir := filepath.Dir(GetConfigPath())
-	if err := os.MkdirAll(configDir, 0700); err != nil {
-		return fmt.Errorf("failed to create config directory: %v", err)
+// syncAndReport syncs ~/.aws/config with the configured orgs and reports changes.
+func syncAndReport(cfg *FileConfig) error {
+	res, err := syncAWSConfig(cfg.Orgs)
+	if err != nil {
+		return fmt.Errorf("failed to update ~/.aws/config: %w", err)
 	}
-
-	// Set viper values
-	viper.Set("sso.start_url", ssoStartURL)
-	viper.Set("sso.region", ssoRegion)
-	viper.Set("default_region", defaultRegion)
-
-	// Write config file with secure permissions
-	if err := viper.WriteConfigAs(GetConfigPath()); err != nil {
-		return fmt.Errorf("failed to write config file: %v", err)
-	}
-
-	// Ensure secure permissions on config file
-	if err := os.Chmod(GetConfigPath(), 0600); err != nil {
-		return fmt.Errorf("failed to set config file permissions: %v", err)
-	}
-
-	fmt.Printf("Configuration saved to %s\n", GetConfigPath())
+	logSyncResult(res)
 	return nil
 }
 
-// InitializeConfigWithPrompt checks for existing config and prompts user before overwriting
-func InitializeConfigWithPrompt() error {
-	// Check if config already exists
-	configPath := GetConfigPath()
-	if _, err := os.Stat(configPath); err == nil {
-		fmt.Printf("Configuration file already exists at %s\n", configPath)
-		fmt.Print("Do you want to overwrite it? (y/N): ")
-
-		var response string
-		fmt.Scanln(&response)
-
-		if response != "y" && response != "Y" && response != "yes" && response != "Yes" {
-			fmt.Println("Configuration initialization cancelled.")
-			return nil
+// AddOrg interactively adds an org and creates its sso-session in
+// ~/.aws/config. If name is empty the user is asked for one (suggested from the
+// start URL). The first org becomes the default.
+func AddOrg(name string) (string, error) {
+	cfg, err := ReadFileConfig()
+	if err != nil {
+		return "", err
+	}
+	if name != "" {
+		if err := validateOrgName(name); err != nil {
+			return "", err
+		}
+		if _, exists := cfg.Orgs[name]; exists {
+			return "", fmt.Errorf("org %q already exists; remove it first with 'awsc config remove %s'", name, name)
 		}
 	}
 
-	return InitializeConfig()
-}
-
-// ShowConfig displays the current configuration
-func ShowConfig() error {
-	configPath := GetConfigPath()
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		fmt.Printf("No configuration file found. Run 'awsc config init' to create one.\n")
-		return nil
+	reader := bufio.NewReader(stdin)
+	org, err := promptOrgSettings(reader)
+	if err != nil {
+		return "", err
+	}
+	for existing, cfgOrg := range cfg.Orgs {
+		if normaliseStartURL(cfgOrg.SSO.StartURL) == normaliseStartURL(org.SSO.StartURL) {
+			return "", fmt.Errorf("%s is already configured as org %q", org.SSO.StartURL, existing)
+		}
 	}
 
-	fmt.Printf("Configuration file: %s\n\n", configPath)
-	fmt.Printf("SSO Start URL: %s\n", viper.GetString("sso.start_url"))
-	fmt.Printf("SSO Region: %s\n", viper.GetString("sso.region"))
-	fmt.Printf("Default Region: %s\n", viper.GetString("default_region"))
+	for name == "" {
+		suggested := suggestOrgName(org.SSO.StartURL)
+		v, err := prompt(reader, fmt.Sprintf("Org name [%s]: ", suggested))
+		if err != nil {
+			return "", err
+		}
+		if v == "" {
+			v = suggested
+		}
+		if err := validateOrgName(v); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		} else if _, exists := cfg.Orgs[v]; exists {
+			fmt.Fprintf(os.Stderr, "Org %q already exists, choose another name.\n", v)
+		} else {
+			name = v
+		}
+	}
+
+	cfg.Orgs[name] = org
+	if cfg.DefaultOrg == "" {
+		cfg.DefaultOrg = name
+	}
+	if err := writeFileConfig(cfg); err != nil {
+		return "", fmt.Errorf("failed to write config file: %w", err)
+	}
+	applyOrg(name, org)
+
+	suffix := ""
+	if cfg.DefaultOrg == name {
+		suffix = " (default)"
+	}
+	fmt.Fprintf(os.Stderr, "Org %q saved to %s%s\n", name, GetConfigPath(), suffix)
+	return name, syncAndReport(cfg)
+}
+
+// ListOrgs prints configured orgs, marking the default (*) and the active one.
+func ListOrgs(w io.Writer) error {
+	cfg, err := ReadFileConfig()
+	if err != nil {
+		return err
+	}
+	if len(cfg.Orgs) == 0 {
+		fmt.Fprintln(os.Stderr, "No orgs configured. Run 'awsc config add'.")
+		return nil
+	}
+	activeOrg := active.Org
+	for _, name := range cfg.sortedOrgNames() {
+		org := cfg.Orgs[name]
+		marker := " "
+		var tags []string
+		if name == cfg.DefaultOrg {
+			marker = "*"
+			tags = append(tags, "default")
+		}
+		if name == activeOrg {
+			tags = append(tags, "active")
+		}
+		label := name
+		if len(tags) > 0 {
+			label += " (" + strings.Join(tags, ", ") + ")"
+		}
+		fmt.Fprintf(w, "%s %s\n    %s  sso:%s  region:%s\n", marker, label, org.SSO.StartURL, org.SSO.Region, org.DefaultRegion)
+	}
+	return nil
+}
+
+// UseOrg sets the default org and switches the current terminal to it. If the
+// terminal is logged in to another org, its session is cleared so the next
+// command uses the new org (logging in if needed). Other terminals keep
+// their org.
+func UseOrg(name string) error {
+	cfg, err := ReadFileConfig()
+	if err != nil {
+		return err
+	}
+	if _, ok := cfg.Orgs[name]; !ok {
+		return unknownOrgError(cfg, name)
+	}
+	cfg.DefaultOrg = name
+	if err := writeFileConfig(cfg); err != nil {
+		return err
+	}
+	if session, err := GetCurrentSession(); err == nil && session.Org != name {
+		if err := ClearCurrentSession(); err != nil {
+			return err
+		}
+	}
+	applyOrg(name, cfg.Orgs[name])
+	fmt.Fprintf(os.Stderr, "Now using org %q (default)\n", name)
+	return nil
+}
+
+// RemoveOrg removes an org, its sso-session and awsc profiles in
+// ~/.aws/config, and its cached SSO token.
+func RemoveOrg(name string) error {
+	cfg, err := ReadFileConfig()
+	if err != nil {
+		return err
+	}
+	if _, ok := cfg.Orgs[name]; !ok {
+		return unknownOrgError(cfg, name)
+	}
+	delete(cfg.Orgs, name)
+	if cfg.DefaultOrg == name {
+		cfg.DefaultOrg = ""
+		if len(cfg.Orgs) == 1 {
+			cfg.DefaultOrg = cfg.sortedOrgNames()[0]
+		}
+	}
+	if err := writeFileConfig(cfg); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "Removed org %q\n", name)
+	if cfg.DefaultOrg == "" && len(cfg.Orgs) > 1 {
+		fmt.Fprintln(os.Stderr, "No default org set; run 'awsc config use <name>'")
+	}
+	return syncAndReport(cfg)
+}
+
+// ShowConfig writes the named org's settings, or the active org's, to w.
+func ShowConfig(w io.Writer, name string) error {
+	cfg, err := ReadFileConfig()
+	if err != nil {
+		return err
+	}
+	if len(cfg.Orgs) == 0 {
+		fmt.Fprintln(os.Stderr, "No orgs configured. Run 'awsc config add'.")
+		return nil
+	}
+	if name == "" {
+		name = active.Org
+	}
+	org, ok := cfg.Orgs[name]
+	if !ok {
+		return unknownOrgError(cfg, name)
+	}
+
+	fmt.Fprintf(w, "Configuration file: %s\n\n", GetConfigPath())
+	fmt.Fprintf(w, "Org: %s", name)
+	if name == cfg.DefaultOrg {
+		fmt.Fprint(w, " (default)")
+	}
+	fmt.Fprintf(w, "\nSSO Start URL: %s\nSSO Region: %s\nDefault Region: %s\n", org.SSO.StartURL, org.SSO.Region, org.DefaultRegion)
 	return nil
 }

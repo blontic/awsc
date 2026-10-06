@@ -24,7 +24,7 @@ func TestSaveAndGetSession(t *testing.T) {
 	roleName := "TestRole"
 
 	// Save session
-	err := SaveSession(ppid, profileName, accountID, accountName, roleName)
+	err := SaveSession(ppid, profileName, accountID, accountName, roleName, "")
 	if err != nil {
 		t.Fatalf("SaveSession failed: %v", err)
 	}

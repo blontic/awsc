@@ -2,8 +2,6 @@ package cmd
 
 import (
 	"context"
-	"fmt"
-	"os"
 
 	"github.com/blontic/awsc/internal/aws"
 	"github.com/spf13/cobra"
@@ -33,53 +31,10 @@ func init() {
 func runSecretsShowCommand(cmd *cobra.Command, args []string) {
 	ctx := context.Background()
 
-	// Track if we just authenticated (to avoid double-login with -s flag)
-	justAuthenticated := false
+	secretsManager, err := newManager(ctx, func(ctx context.Context) (*aws.SecretsManager, error) {
+		return aws.NewSecretsManager(ctx)
+	}, secretsSwitchAccount)
+	exitOnError(err)
 
-	// Create secrets manager
-	secretsManager, err := aws.NewSecretsManager(ctx)
-	if err != nil {
-		// Check if this is a "no active session" error
-		if aws.IsAuthError(err) {
-			shouldReauth, reAuthErr := aws.PromptForReauth(ctx)
-			if reAuthErr != nil {
-				fmt.Printf("Error during re-authentication: %v\n", reAuthErr)
-				os.Exit(1)
-			}
-			if !shouldReauth {
-				fmt.Printf("Authentication cancelled\n")
-				os.Exit(1)
-			}
-			justAuthenticated = true
-			// Retry creating manager after successful login
-			secretsManager, err = aws.NewSecretsManager(ctx)
-			if err != nil {
-				fmt.Printf("Error creating secrets manager after re-authentication: %v\n", err)
-				os.Exit(1)
-			}
-		} else {
-			fmt.Printf("Error creating secrets manager: %v\n", err)
-			os.Exit(1)
-		}
-	}
-
-	// Handle account switching if requested (skip if we just authenticated)
-	if secretsSwitchAccount && !justAuthenticated {
-		if err := handleAccountSwitch(ctx); err != nil {
-			fmt.Printf("%v\n", err)
-			os.Exit(1)
-		}
-		// Recreate secrets manager with new credentials
-		secretsManager, err = aws.NewSecretsManager(ctx)
-		if err != nil {
-			fmt.Printf("Error creating secrets manager after account switch: %v\n", err)
-			os.Exit(1)
-		}
-	}
-
-	// Run the secrets show operation
-	if err := secretsManager.RunShowSecrets(ctx, secretName); err != nil {
-		fmt.Printf("\n✗ Error: %v\n", err)
-		os.Exit(1)
-	}
+	exitOnError(secretsManager.RunShowSecrets(ctx, secretName))
 }
