@@ -1,10 +1,21 @@
 version: 2
 updates:
+  # Cooldowns delay version updates so newly published (possibly compromised)
+  # releases have time to be spotted and pulled. Security updates ignore the
+  # cooldown and are raised immediately.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
+
   - package-ecosystem: gomod
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+      semver-minor-days: 7
+      semver-patch-days: 7
