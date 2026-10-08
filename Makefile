@@ -59,7 +59,7 @@ install:
 mocks:
 	rm -rf internal/aws/mocks
 	mkdir -p internal/aws/mocks
-	cd internal/aws && go run go.uber.org/mock/mockgen -destination=mocks/aws_mocks.go -package=mocks . RDSClient,EC2Client,SSMClient,SecretsManagerClient,OpenSearchClient
+	cd internal/aws && go run go.uber.org/mock/mockgen -destination=mocks/aws_mocks.go -package=mocks . RDSClient,EC2Client,SSMClient,SecretsManagerClient,OpenSearchClient,SSOLogoutClient
 
 # Development workflow: build and test
 dev: mocks deps test build
