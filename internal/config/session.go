@@ -93,6 +93,19 @@ func ClearCurrentSession() error {
 	return nil
 }
 
+// ClearAllSessions logs every terminal out of awsc by removing all session
+// files.
+func ClearAllSessions() error {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	if err := os.RemoveAll(filepath.Join(homeDir, ".awsc", "sessions")); err != nil {
+		return fmt.Errorf("failed to remove sessions: %w", err)
+	}
+	return nil
+}
+
 // CleanupStaleSessions removes session files for processes that no longer exist
 func CleanupStaleSessions() error {
 	homeDir, err := os.UserHomeDir()
