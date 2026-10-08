@@ -81,7 +81,7 @@ awsc login --force                          # new browser login
 awsc logout                                 # end the org's SSO session and clear this terminal
 awsc logout --all                           # every org and every terminal
 
-# RDS
+# RDS (shows the local address and database to connect to)
 awsc rds connect                            # pick an instance or Aurora endpoint
 awsc rds connect --name my-db --local-port 5432
 awsc rds connect --name "my-cluster (reader)"

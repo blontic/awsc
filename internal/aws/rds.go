@@ -41,6 +41,7 @@ type RDSInstance struct {
 	Endpoint     string
 	Port         int32
 	Engine       string
+	DatabaseName string
 	EndpointType string // "instance", "cluster-writer", "cluster-reader"
 	ClusterName  string // For cluster endpoints
 }
@@ -177,8 +178,21 @@ func (r *RDSManager) RunConnect(ctx context.Context, instanceName string, localP
 		localPort = selectedInstance.Port
 	}
 
+	fmt.Fprintf(os.Stderr, "\n%s\n\n", tunnelSummary(selectedInstance, localPort))
+
 	// Start port forwarding
 	return r.StartPortForwarding(ctx, bastion.InstanceId, selectedInstance.Endpoint, selectedInstance.Port, localPort)
+}
+
+// tunnelSummary describes the tunnel using only what is known for certain:
+// the database, its engine, the local address and, if RDS reports one, the
+// database name.
+func tunnelSummary(db RDSInstance, localPort int32) string {
+	summary := fmt.Sprintf("Tunnel to %s (%s): localhost:%d", db.Identifier, db.Engine, localPort)
+	if db.DatabaseName != "" {
+		summary += ", database: " + db.DatabaseName
+	}
+	return summary
 }
 
 func (r *RDSManager) ListRDSInstances(ctx context.Context) ([]RDSInstance, error) {
@@ -237,6 +251,7 @@ func (r *RDSManager) getDBInstances(ctx context.Context) ([]RDSInstance, error) 
 				Endpoint:     aws.ToString(db.Endpoint.Address),
 				Port:         aws.ToInt32(db.Endpoint.Port),
 				Engine:       aws.ToString(db.Engine),
+				DatabaseName: aws.ToString(db.DBName),
 				EndpointType: "instance",
 			})
 		}
@@ -278,6 +293,7 @@ func (r *RDSManager) getClusterEndpoints(ctx context.Context) ([]RDSInstance, er
 					Endpoint:     aws.ToString(cluster.Endpoint),
 					Port:         aws.ToInt32(cluster.Port),
 					Engine:       aws.ToString(cluster.Engine),
+					DatabaseName: aws.ToString(cluster.DatabaseName),
 					EndpointType: "cluster-writer",
 					ClusterName:  clusterID,
 				})
@@ -290,6 +306,7 @@ func (r *RDSManager) getClusterEndpoints(ctx context.Context) ([]RDSInstance, er
 					Endpoint:     aws.ToString(cluster.ReaderEndpoint),
 					Port:         aws.ToInt32(cluster.Port),
 					Engine:       aws.ToString(cluster.Engine),
+					DatabaseName: aws.ToString(cluster.DatabaseName),
 					EndpointType: "cluster-reader",
 					ClusterName:  clusterID,
 				})
