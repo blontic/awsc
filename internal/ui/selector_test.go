@@ -688,3 +688,15 @@ func TestSelectorModel_ResizeClearsScreen(t *testing.T) {
 		}
 	}
 }
+
+func TestGetAWSContext_ParsesRoleFromEnvProfile(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AWSC_PROFILE", "awsc-prod/ReadOnly")
+	awscconfig.SetActive(awscconfig.Settings{DefaultRegion: "us-west-2"})
+	defer awscconfig.SetActive(awscconfig.Settings{})
+
+	ctx := getAWSContext()
+	if ctx == nil || ctx.Account != "prod" || ctx.Role != "ReadOnly" {
+		t.Errorf("expected account prod and role ReadOnly, got %+v", ctx)
+	}
+}
