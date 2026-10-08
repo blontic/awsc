@@ -23,6 +23,9 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Check go.mod and go.sum
+        run: make check-mod
+
       - name: Test
         run: make test
 
