@@ -13,6 +13,7 @@ A CLI for AWS SSO login, RDS/OpenSearch port forwarding, EC2 sessions and RDP, a
 - **EC2** - Shell sessions via SSM, and RDP port forwarding to Windows instances
 - **OpenSearch** - Port forward to private OpenSearch domains through a bastion
 - **Secrets Manager** - Find and show secrets
+- **AWS console** - Open the web console as the terminal's account and role
 - **Per-terminal accounts** - Different terminals can use different accounts and orgs at the same time
 
 No access keys are stored: awsc writes standard AWS SSO profiles that also work with the AWS CLI.
@@ -74,6 +75,11 @@ awsc completion bash | sudo tee /etc/bash_completion.d/awsc > /dev/null # bash, 
 Every command can be run interactively (pick from a list) or directly with flags, which makes it scriptable. A name that doesn't exist is an error that says which account and region were searched.
 
 ```bash
+# What this terminal uses (reads local files only)
+awsc status                                 # org, account, role, region, profile
+awsc status --short                         # <account>/<role>, for shell prompts
+awsc status --check                         # also confirm with AWS that the credentials work
+
 # Login
 awsc login                                  # pick account and role
 awsc login --account my-account --role Admin
@@ -99,6 +105,10 @@ awsc opensearch connect --name my-domain --local-port 9200
 awsc secrets show
 awsc secrets show --name my-secret > secret.txt
 
+# AWS console in the browser, signed in as this terminal's account and role
+awsc console
+awsc console --service rds                  # service name as in its console URL
+
 # Configuration
 awsc config list                            # * = default
 awsc config add [org]
@@ -111,7 +121,7 @@ awsc config remove <org>
 
 | Flag | Applies to | Description |
 | --- | --- | --- |
-| `-s`, `--switch-account` | `rds`, `ec2`, `opensearch`, `secrets` | Pick another account/role first |
+| `-s`, `--switch-account` | `rds`, `ec2`, `opensearch`, `secrets`, `console` | Pick another account/role first |
 | `--region <region>` | all | Override the region for this command |
 | `--org <name>` | all | Use another org (logging in switches this terminal to it) |
 | `-v`, `--verbose` | all | Debug output |
@@ -132,6 +142,16 @@ aws s3 ls --profile awsc-my-account/ReadOnly
 ```
 
 awsc keeps its `awsc-*` sections in `~/.aws/config` in sync with its orgs and never touches anything else in that file. Profiles from older versions named `awsc-<account>` are removed and recreated under the new name the next time they are used.
+
+### Show the account in your prompt
+
+`awsc status --short` prints `<account>/<role>` for the terminal, or exits with code 1 if none is selected. Call it from a shell hook so awsc sees your shell as its parent. For zsh, in `~/.zshrc`:
+
+```zsh
+precmd() { RPROMPT="$(awsc status --short 2>/dev/null)" }
+```
+
+Prompt tools that run commands through their own process (such as Starship's `custom` modules) show the wrong terminal's session or none.
 
 ## Configuration
 

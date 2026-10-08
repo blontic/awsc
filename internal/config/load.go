@@ -105,3 +105,23 @@ func sessionProfile(session *SessionInfo) (string, error) {
 	}
 	return name, err
 }
+
+// CurrentAccountRole returns the account ID and role the terminal uses: those
+// of the AWSC_PROFILE profile if set, otherwise of the terminal's session.
+func CurrentAccountRole() (accountID, roleName string, err error) {
+	if profile := os.Getenv("AWSC_PROFILE"); profile != "" {
+		accountID, roleName, found, err := lookupProfile(profile)
+		if err != nil {
+			return "", "", err
+		}
+		if !found || accountID == "" || roleName == "" {
+			return "", "", fmt.Errorf("profile %q (AWSC_PROFILE) is not an SSO profile in ~/.aws/config", profile)
+		}
+		return accountID, roleName, nil
+	}
+	session, err := GetCurrentSession()
+	if err != nil {
+		return "", "", err
+	}
+	return session.AccountID, session.RoleName, nil
+}
