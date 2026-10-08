@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,8 +15,9 @@ import (
 // This file manages the parts of ~/.aws/config that awsc owns:
 //
 //   - one [sso-session awsc-<org>] per org in the awsc config
-//   - SSO profiles [profile awsc-<account>] (or awsc-<org>-<account> when the
-//     name is taken by another org) that point at their org's session
+//   - SSO profiles [profile awsc-<account>/<role>] (or
+//     awsc-<org>-<account>/<role> when the name is taken by another org) that
+//     point at their org's session
 //
 // No credentials are ever written; the AWS SDKs/CLI resolve short-lived role
 // credentials on demand from the cached SSO token, exactly like profiles
@@ -120,6 +122,8 @@ func validateOrgs(orgs map[string]OrgConfig) error {
 //     org was re-created with a new name) is renamed and its profiles repointed
 //   - awsc sessions matching no org are removed
 //   - awsc profiles whose session is not an org's session are removed
+//   - awsc profiles named without a role (awsc-<account>, the previous naming)
+//     are removed; they are recreated under the new name on next use
 func syncSessions(content string, orgs map[string]OrgConfig) (string, syncResult, error) {
 	res := syncResult{Renamed: map[string]string{}}
 	if err := validateOrgs(orgs); err != nil {
@@ -178,7 +182,10 @@ func syncSessions(content string, orgs map[string]OrgConfig) (string, syncResult
 		}
 		keys, _ := sectionKeys(s, awscProfileKeys)
 		session := keys["sso_session"]
-		if target, ok := res.Renamed[session]; ok {
+		if !strings.Contains(s.name, "/") {
+			res.RemovedProfiles = append(res.RemovedProfiles, strings.TrimPrefix(s.name, "profile "))
+			s.lines = nil
+		} else if target, ok := res.Renamed[session]; ok {
 			setSectionKey(s, "sso_session", target)
 		} else if _, isOrg := orgs[strings.TrimPrefix(session, ssoSessionPrefix)]; !isOrg {
 			res.RemovedProfiles = append(res.RemovedProfiles, strings.TrimPrefix(s.name, "profile "))
@@ -196,13 +203,13 @@ func syncSessions(content string, orgs map[string]OrgConfig) (string, syncResult
 	return appendSections(joinSections(sections), missing), res, nil
 }
 
-// profileName picks the profile name for an account: "awsc-<account>", or
-// "awsc-<org>-<account>" if that name belongs to another org. Whitespace in
-// account names becomes "-".
+// profileName picks the profile name for an account and role:
+// "awsc-<account>/<role>", or "awsc-<org>-<account>/<role>" if that name
+// belongs to another org. Whitespace in account names becomes "-".
 func profileName(sections []*iniSection, p Profile) string {
 	account := strings.Join(strings.Fields(p.AccountName), "-")
-	plain := "awsc-" + account
-	prefixed := "awsc-" + p.Org + "-" + account
+	plain := "awsc-" + account + "/" + p.RoleName
+	prefixed := "awsc-" + p.Org + "-" + account + "/" + p.RoleName
 	for _, s := range sections[1:] {
 		switch s.name {
 		case "profile " + prefixed:
@@ -258,6 +265,10 @@ func awsConfigPath() (string, error) {
 // modifyAWSConfig applies fn to ~/.aws/config under an exclusive lock. If the
 // content changes, the previous file is backed up to ~/.aws/config.awsc.bak
 // and the new content written atomically, keeping the file's permissions.
+//
+// The lock only coordinates awsc processes. If another tool saves the file
+// while fn runs, fn is re-applied to that version so its changes are kept.
+// fn may therefore be called more than once.
 func modifyAWSConfig(fn func(content string) (string, error)) error {
 	path, err := awsConfigPath()
 	if err != nil {
@@ -273,26 +284,47 @@ func modifyAWSConfig(fn func(content string) (string, error)) error {
 	}
 	defer unlock()
 
+	const attempts = 3
+	for range attempts {
+		data, err := readAWSConfig(path)
+		if err != nil {
+			return err
+		}
+		content, err := fn(string(data))
+		if err != nil || content == string(data) {
+			return err
+		}
+
+		current, err := readAWSConfig(path)
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(current, data) {
+			continue
+		}
+
+		if len(data) > 0 {
+			if err := WriteFileAtomic(path+".awsc.bak", data, 0600, false); err != nil {
+				return fmt.Errorf("failed to back up %s: %w", path, err)
+			}
+		}
+		// ~/.aws/config is shared with other tools and holds no secrets, so the
+		// user's existing permissions are kept.
+		if err := WriteFileAtomic(path, []byte(content), 0600, true); err != nil {
+			return fmt.Errorf("failed to write %s: %w", path, err)
+		}
+		return nil
+	}
+	return fmt.Errorf("%s keeps being changed by another program; try again", path)
+}
+
+// readAWSConfig reads ~/.aws/config; a missing file reads as empty.
+func readAWSConfig(path string) ([]byte, error) {
 	data, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to read %s: %w", path, err)
+		return nil, fmt.Errorf("failed to read %s: %w", path, err)
 	}
-	content, err := fn(string(data))
-	if err != nil || content == string(data) {
-		return err
-	}
-
-	if len(data) > 0 {
-		if err := WriteFileAtomic(path+".awsc.bak", data, 0600, false); err != nil {
-			return fmt.Errorf("failed to back up %s: %w", path, err)
-		}
-	}
-	// ~/.aws/config is shared with other tools and holds no secrets, so the
-	// user's existing permissions are kept.
-	if err := WriteFileAtomic(path, []byte(content), 0600, true); err != nil {
-		return fmt.Errorf("failed to write %s: %w", path, err)
-	}
-	return nil
+	return data, nil
 }
 
 // applyTokenChanges keeps cached SSO tokens in line with a sync: a renamed
