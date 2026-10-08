@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -308,5 +309,55 @@ func TestSectionHeaderWithTrailingComment(t *testing.T) {
 	}
 	if got != "[default] # main\nregion = us-west-2\n" {
 		t.Errorf("header with trailing comment not recognised:\n%s", got)
+	}
+}
+
+func TestModifyAWSConfig_KeepsConcurrentChangeByAnotherTool(t *testing.T) {
+	home := setupHome(t, "")
+	path := filepath.Join(home, ".aws", "config")
+	writeFile(t, path, "[default]\nregion = us-west-2\n")
+
+	calls := 0
+	err := modifyAWSConfig(func(content string) (string, error) {
+		calls++
+		if calls == 1 {
+			// Another tool saves the file while awsc is working on it.
+			writeFile(t, path, content+"\n[profile from-other-tool]\nregion = eu-west-1\n")
+		}
+		return content + "\n[profile awsc-new/R]\nsso_session = awsc-alpha\n", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Errorf("expected the edit to be redone once, got %d calls", calls)
+	}
+	got := readFile(t, path)
+	for _, want := range []string{"[default]", "[profile from-other-tool]", "[profile awsc-new/R]"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Count(got, "[profile awsc-new/R]") != 1 {
+		t.Errorf("awsc's change applied more than once:\n%s", got)
+	}
+}
+
+func TestModifyAWSConfig_GivesUpIfFileKeepsChanging(t *testing.T) {
+	home := setupHome(t, "")
+	path := filepath.Join(home, ".aws", "config")
+	writeFile(t, path, "[default]\n")
+
+	n := 0
+	err := modifyAWSConfig(func(content string) (string, error) {
+		n++
+		writeFile(t, path, fmt.Sprintf("[default]\n# edit %d\n", n))
+		return content + "[profile awsc-x/R]\n", nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "another program") {
+		t.Errorf("expected an error, got %v", err)
+	}
+	if got := readFile(t, path); strings.Contains(got, "awsc-x") {
+		t.Errorf("must not overwrite the other program's version:\n%s", got)
 	}
 }

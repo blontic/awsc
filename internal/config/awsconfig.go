@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -264,6 +265,10 @@ func awsConfigPath() (string, error) {
 // modifyAWSConfig applies fn to ~/.aws/config under an exclusive lock. If the
 // content changes, the previous file is backed up to ~/.aws/config.awsc.bak
 // and the new content written atomically, keeping the file's permissions.
+//
+// The lock only coordinates awsc processes. If another tool saves the file
+// while fn runs, fn is re-applied to that version so its changes are kept.
+// fn may therefore be called more than once.
 func modifyAWSConfig(fn func(content string) (string, error)) error {
 	path, err := awsConfigPath()
 	if err != nil {
@@ -279,26 +284,47 @@ func modifyAWSConfig(fn func(content string) (string, error)) error {
 	}
 	defer unlock()
 
+	const attempts = 3
+	for range attempts {
+		data, err := readAWSConfig(path)
+		if err != nil {
+			return err
+		}
+		content, err := fn(string(data))
+		if err != nil || content == string(data) {
+			return err
+		}
+
+		current, err := readAWSConfig(path)
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(current, data) {
+			continue
+		}
+
+		if len(data) > 0 {
+			if err := WriteFileAtomic(path+".awsc.bak", data, 0600, false); err != nil {
+				return fmt.Errorf("failed to back up %s: %w", path, err)
+			}
+		}
+		// ~/.aws/config is shared with other tools and holds no secrets, so the
+		// user's existing permissions are kept.
+		if err := WriteFileAtomic(path, []byte(content), 0600, true); err != nil {
+			return fmt.Errorf("failed to write %s: %w", path, err)
+		}
+		return nil
+	}
+	return fmt.Errorf("%s keeps being changed by another program; try again", path)
+}
+
+// readAWSConfig reads ~/.aws/config; a missing file reads as empty.
+func readAWSConfig(path string) ([]byte, error) {
 	data, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to read %s: %w", path, err)
+		return nil, fmt.Errorf("failed to read %s: %w", path, err)
 	}
-	content, err := fn(string(data))
-	if err != nil || content == string(data) {
-		return err
-	}
-
-	if len(data) > 0 {
-		if err := WriteFileAtomic(path+".awsc.bak", data, 0600, false); err != nil {
-			return fmt.Errorf("failed to back up %s: %w", path, err)
-		}
-	}
-	// ~/.aws/config is shared with other tools and holds no secrets, so the
-	// user's existing permissions are kept.
-	if err := WriteFileAtomic(path, []byte(content), 0600, true); err != nil {
-		return fmt.Errorf("failed to write %s: %w", path, err)
-	}
-	return nil
+	return data, nil
 }
 
 // applyTokenChanges keeps cached SSO tokens in line with a sync: a renamed
