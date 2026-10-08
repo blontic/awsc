@@ -257,3 +257,20 @@ func TestLoadAWSConfigWithProfile_UpgradesProfileWithoutRole(t *testing.T) {
 		t.Errorf("session not updated: %+v %v", session, err)
 	}
 }
+
+func TestCurrentAccountRole(t *testing.T) {
+	setupSession(t, "alpha", "[profile mine]\nsso_session = work\nsso_account_id = 222222222222\nsso_role_name = ReadOnly\n\n[profile static]\nregion = us-east-1\n")
+	if id, role, err := CurrentAccountRole(); err != nil || id != "111111111111" || role != "Admin" {
+		t.Errorf("from session: %s %s %v", id, role, err)
+	}
+	t.Setenv("AWSC_PROFILE", "mine")
+	if id, role, err := CurrentAccountRole(); err != nil || id != "222222222222" || role != "ReadOnly" {
+		t.Errorf("from AWSC_PROFILE: %s %s %v", id, role, err)
+	}
+	for _, p := range []string{"static", "missing"} {
+		t.Setenv("AWSC_PROFILE", p)
+		if _, _, err := CurrentAccountRole(); err == nil {
+			t.Errorf("expected an error for profile %q", p)
+		}
+	}
+}

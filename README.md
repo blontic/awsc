@@ -13,6 +13,7 @@ A CLI for AWS SSO login, RDS/OpenSearch port forwarding, EC2 sessions and RDP, a
 - **EC2** - Shell sessions via SSM, and RDP port forwarding to Windows instances
 - **OpenSearch** - Port forward to private OpenSearch domains through a bastion
 - **Secrets Manager** - Find and show secrets
+- **AWS console** - Open the web console as the terminal's account and role
 - **Per-terminal accounts** - Different terminals can use different accounts and orgs at the same time
 
 No access keys are stored: awsc writes standard AWS SSO profiles that also work with the AWS CLI.
@@ -104,6 +105,10 @@ awsc opensearch connect --name my-domain --local-port 9200
 awsc secrets show
 awsc secrets show --name my-secret > secret.txt
 
+# AWS console in the browser, signed in as this terminal's account and role
+awsc console
+awsc console --service rds                  # service name as in its console URL
+
 # Configuration
 awsc config list                            # * = default
 awsc config add [org]
@@ -116,7 +121,7 @@ awsc config remove <org>
 
 | Flag | Applies to | Description |
 | --- | --- | --- |
-| `-s`, `--switch-account` | `rds`, `ec2`, `opensearch`, `secrets` | Pick another account/role first |
+| `-s`, `--switch-account` | `rds`, `ec2`, `opensearch`, `secrets`, `console` | Pick another account/role first |
 | `--region <region>` | all | Override the region for this command |
 | `--org <name>` | all | Use another org (logging in switches this terminal to it) |
 | `-v`, `--verbose` | all | Debug output |
