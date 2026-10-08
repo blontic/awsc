@@ -64,6 +64,12 @@ func (m *LogoutManager) RunLogout(ctx context.Context, all bool) error {
 	}
 
 	for _, org := range orgs {
+		// Remove role credentials the AWS CLI cached, which otherwise keep
+		// working after logout until they expire. Done first, while the
+		// terminal sessions that list the org's roles still exist.
+		if err := awscconfig.RemoveCLIRoleCredentials(org); err != nil {
+			return err
+		}
 		loggedIn, err := m.logoutOrg(ctx, org, cfg.Orgs[org].SSO.Region)
 		switch {
 		case err != nil:
@@ -99,11 +105,9 @@ func (m *LogoutManager) logoutOrg(ctx context.Context, org, ssoRegion string) (b
 
 	var cache ssoCache
 	if json.Unmarshal(data, &cache) == nil && cache.AccessToken != "" {
-		region := cache.Region
-		if region == "" {
-			region = ssoRegion
-		}
-		_, err := m.client(region).Logout(ctx, &sso.LogoutInput{AccessToken: &cache.AccessToken})
+		// The region comes from the awsc config, not the token file, which
+		// other tools rewrite.
+		_, err := m.client(ssoRegion).Logout(ctx, &sso.LogoutInput{AccessToken: &cache.AccessToken})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Could not end the SSO session for org %q with AWS (%v); removing the local login anyway\n", org, err)
 		}

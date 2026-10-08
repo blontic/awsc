@@ -84,7 +84,7 @@ awsc status --check                         # also confirm with AWS that the cre
 awsc login                                  # pick account and role
 awsc login --account my-account --role Admin
 awsc login --force                          # new browser login
-awsc logout                                 # end the org's SSO session and clear this terminal
+awsc logout                                 # end the org's SSO session, remove cached logins and AWS CLI role credentials
 awsc logout --all                           # every org and every terminal
 
 # RDS (shows the local address and database to connect to)
