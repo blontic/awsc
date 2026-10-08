@@ -74,6 +74,11 @@ awsc completion bash | sudo tee /etc/bash_completion.d/awsc > /dev/null # bash, 
 Every command can be run interactively (pick from a list) or directly with flags, which makes it scriptable. A name that doesn't exist is an error that says which account and region were searched.
 
 ```bash
+# What this terminal uses (reads local files only)
+awsc status                                 # org, account, role, region, profile
+awsc status --short                         # <account>/<role>, for shell prompts
+awsc status --check                         # also confirm with AWS that the credentials work
+
 # Login
 awsc login                                  # pick account and role
 awsc login --account my-account --role Admin
@@ -132,6 +137,16 @@ aws s3 ls --profile awsc-my-account/ReadOnly
 ```
 
 awsc keeps its `awsc-*` sections in `~/.aws/config` in sync with its orgs and never touches anything else in that file. Profiles from older versions named `awsc-<account>` are removed and recreated under the new name the next time they are used.
+
+### Show the account in your prompt
+
+`awsc status --short` prints `<account>/<role>` for the terminal, or exits with code 1 if none is selected. Call it from a shell hook so awsc sees your shell as its parent. For zsh, in `~/.zshrc`:
+
+```zsh
+precmd() { RPROMPT="$(awsc status --short 2>/dev/null)" }
+```
+
+Prompt tools that run commands through their own process (such as Starship's `custom` modules) show the wrong terminal's session or none.
 
 ## Configuration
 
