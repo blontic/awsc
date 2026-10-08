@@ -27,6 +27,11 @@ func TestStatusOutput(t *testing.T) {
 	if got := shortStatus(&config.Status{AccountID: "111111111111", RoleName: "Admin"}); got != "111111111111/Admin" {
 		t.Errorf("shortStatus without account name = %q", got)
 	}
+	// Shell prompt metacharacters must never reach the prompt.
+	evil := &config.Status{AccountName: "x$(touch /tmp/pwned)`id`%F{red}\x1b[2J", RoleName: "Admin;rm"}
+	if got, want := shortStatus(evil), "x__touch /tmp/pwned__id__F_red___2J/Admin_rm"; got != want {
+		t.Errorf("shortStatus = %q, want %q", got, want)
+	}
 
 	var buf bytes.Buffer
 	printStatus(&buf, s)

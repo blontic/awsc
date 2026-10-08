@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/blontic/awsc/internal/aws"
 	"github.com/blontic/awsc/internal/config"
@@ -62,12 +63,25 @@ func runStatusCommand(cmd *cobra.Command, args []string) {
 	}
 }
 
+// shortStatus is "<account>/<role>" for shell prompts. Account names can
+// contain any printable character, and shells may expand $(…), backticks or
+// % escapes in prompts, so anything outside a safe set becomes "_".
 func shortStatus(s *config.Status) string {
 	account := s.AccountName
 	if account == "" {
 		account = s.AccountID
 	}
-	return account + "/" + s.RoleName
+	return strings.Map(promptSafe, account) + "/" + strings.Map(promptSafe, s.RoleName)
+}
+
+func promptSafe(r rune) rune {
+	switch {
+	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		return r
+	case strings.ContainsRune(" ._-+=,@/", r):
+		return r
+	}
+	return '_'
 }
 
 func printStatus(w io.Writer, s *config.Status) {
