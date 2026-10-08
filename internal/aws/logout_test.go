@@ -70,7 +70,7 @@ func tokenExists(t *testing.T, org string) bool {
 
 func TestRunLogout_ActiveOrg(t *testing.T) {
 	setupLogoutHome(t, map[string]string{
-		"alpha": `{"accessToken":"alpha-token","region":"us-east-1"}`,
+		"alpha": `{"accessToken":"alpha-token","region":"ap-south-1"}`,
 		"beta":  `{"accessToken":"beta-token","region":"eu-west-1"}`,
 	})
 	ctrl := gomock.NewController(t)
@@ -90,7 +90,7 @@ func TestRunLogout_ActiveOrg(t *testing.T) {
 		t.Error("only the active org's token should be removed")
 	}
 	if len(regions) != 1 || regions[0] != "us-east-1" {
-		t.Errorf("logout should use the token's SSO region, got %v", regions)
+		t.Errorf("logout should use the org's configured SSO region, not the token file's, got %v", regions)
 	}
 	if _, err := awscconfig.GetCurrentSession(); err == nil {
 		t.Error("this terminal's session should be cleared")
@@ -118,7 +118,7 @@ func TestRunLogout_All(t *testing.T) {
 	if tokenExists(t, "alpha") || tokenExists(t, "beta") {
 		t.Error("all tokens should be removed")
 	}
-	// beta's token has no region, so the org's SSO region is used.
+	// Each org's configured SSO region is used.
 	if len(regions) != 2 || regions[0] != "us-east-1" || regions[1] != "eu-west-1" {
 		t.Errorf("unexpected regions %v", regions)
 	}
