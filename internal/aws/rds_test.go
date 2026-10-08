@@ -805,6 +805,7 @@ func TestRDSManager_ListRDSInstances_WithClusters(t *testing.T) {
 					DBInstanceIdentifier: aws.String("standalone-db"),
 					DBInstanceStatus:     aws.String("available"),
 					Engine:               aws.String("mysql"),
+					DBName:               aws.String("app"),
 					DBClusterIdentifier:  nil, // Standalone instance
 					Endpoint: &rdstypes.Endpoint{
 						Address: aws.String("standalone-db.xyz.us-east-1.rds.amazonaws.com"),
@@ -824,6 +825,7 @@ func TestRDSManager_ListRDSInstances_WithClusters(t *testing.T) {
 					DBClusterIdentifier: aws.String("aurora-cluster"),
 					Status:              aws.String("available"),
 					Engine:              aws.String("aurora-mysql"),
+					DatabaseName:        aws.String("main"),
 					Port:                aws.Int32(3306),
 					Endpoint:            aws.String("aurora-cluster.cluster-xyz.us-east-1.rds.amazonaws.com"),
 					ReaderEndpoint:      aws.String("aurora-cluster.cluster-ro-xyz.us-east-1.rds.amazonaws.com"),
@@ -857,6 +859,16 @@ func TestRDSManager_ListRDSInstances_WithClusters(t *testing.T) {
 	}
 	if endpointTypes["cluster-reader"] != 1 {
 		t.Errorf("Expected 1 cluster reader, got %d", endpointTypes["cluster-reader"])
+	}
+
+	for _, instance := range instances {
+		wantDB := "main"
+		if instance.EndpointType == "instance" {
+			wantDB = "app"
+		}
+		if instance.DatabaseName != wantDB {
+			t.Errorf("%s: database %q, want %q", instance.Identifier, instance.DatabaseName, wantDB)
+		}
 	}
 }
 func TestRDSManager_FindBastionHosts_WithStoppedInstances(t *testing.T) {
@@ -1100,5 +1112,16 @@ func TestRDSManager_FindBastionHosts_RunningButNoSGMatch(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no suitable bastion hosts found") {
 		t.Errorf("Expected error about no suitable bastions, got: %v", err)
+	}
+}
+
+func TestTunnelSummary(t *testing.T) {
+	db := RDSInstance{Identifier: "my-db", Engine: "postgres", DatabaseName: "app"}
+	if got, want := tunnelSummary(db, 15432), "Tunnel to my-db (postgres): localhost:15432, database: app"; got != want {
+		t.Errorf("tunnelSummary = %q, want %q", got, want)
+	}
+	db.DatabaseName = ""
+	if got, want := tunnelSummary(db, 5432), "Tunnel to my-db (postgres): localhost:5432"; got != want {
+		t.Errorf("tunnelSummary without a database = %q, want %q", got, want)
 	}
 }

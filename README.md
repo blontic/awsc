@@ -79,7 +79,7 @@ awsc login                                  # pick account and role
 awsc login --account my-account --role Admin
 awsc login --force                          # new browser login
 
-# RDS
+# RDS (shows the local address and database to connect to)
 awsc rds connect                            # pick an instance or Aurora endpoint
 awsc rds connect --name my-db --local-port 5432
 awsc rds connect --name "my-cluster (reader)"
