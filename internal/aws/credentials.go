@@ -286,6 +286,10 @@ func openBrowser(rawURL string) error {
 		return fmt.Errorf("refusing to open non-https URL %q", rawURL)
 	}
 	name, args := browserCommand(runtime.GOOS, isWSL())
+	if name == "cmd.exe" {
+		// cmd.exe treats & as a command separator.
+		rawURL = strings.ReplaceAll(rawURL, "&", "^&")
+	}
 	return exec.Command(name, append(args, rawURL)...).Start()
 }
 
