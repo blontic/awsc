@@ -161,6 +161,7 @@ make dev     # mocks + deps + test + build
 make build   # build ./awsc (version injected via ldflags)
 make test    # go test ./...
 make vuln    # govulncheck
+make check-mod  # go.mod/go.sum are tidy and verified (CI and releases fail otherwise)
 make mocks   # regenerate internal/aws/mocks after changing a *Client interface
 ```
 

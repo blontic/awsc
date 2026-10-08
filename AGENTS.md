@@ -7,6 +7,7 @@
 - Build: `make build` (injects version via ldflags; plain `go build` works but omits version vars).
 - Test: `make test` (`go test ./...`). Single package: `go test ./internal/aws/`. Single test: `go test ./cmd/ -run TestName`.
 - Full dev loop: `make dev` (= mocks + deps + test + build).
+- `make check-mod` (`go mod verify` + `go mod tidy -diff`) runs in CI and as GoReleaser's pre-release hook; run `go mod tidy` after any dependency change or both fail.
 - After ANY code change, run `go build -o awsc main.go` then `go test ./...` before considering it done. CI (`.github/workflows/ci.yml`) only runs `make test` + `make build` on `ubuntu-latest`, with the Go version from `go.mod`.
 
 ## Mocks (easy to get wrong)

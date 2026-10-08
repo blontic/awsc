@@ -4,9 +4,11 @@ version: 2
 
 project_name: awsc
 
+# Build exactly what is committed: fail if go.mod/go.sum are not tidy or the
+# downloaded modules don't match go.sum. CI runs the same check on every PR.
 before:
   hooks:
-    - go mod tidy
+    - make check-mod
 
 builds:
   - id: awsc

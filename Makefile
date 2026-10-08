@@ -1,4 +1,4 @@
-.PHONY: build clean test test-coverage run deps install fmt mocks vuln snapshot
+.PHONY: build clean test test-coverage run deps install fmt mocks vuln snapshot check-mod
 
 # Version variables
 VERSION ?= $(shell git describe --tags --always --dirty)
@@ -27,6 +27,12 @@ test:
 # Run tests with coverage
 test-coverage:
 	go test -cover ./...
+
+# Fail if go.mod/go.sum are not tidy or downloaded modules don't match go.sum
+# (run by CI and by GoReleaser before a release)
+check-mod:
+	go mod verify
+	go mod tidy -diff
 
 # Scan for known vulnerabilities in code and dependencies
 vuln:
