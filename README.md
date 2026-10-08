@@ -123,13 +123,13 @@ awsc config remove <org>
 
 Each terminal remembers its own org, account and role, so different windows can work in different accounts at once. A terminal can switch with `awsc login` or `-s` at any time.
 
-Logging in writes an SSO profile to `~/.aws/config` named `awsc-<account>` (or `awsc-<org>-<account>` if another org has an account with the same name), so you can also use it directly:
+Logging in writes an SSO profile to `~/.aws/config` named `awsc-<account>/<role>` (or `awsc-<org>-<account>/<role>` if another org has an account with the same name), so each role you use gets its own profile and you can also use them directly:
 
 ```bash
-aws s3 ls --profile awsc-my-account
+aws s3 ls --profile awsc-my-account/ReadOnly
 ```
 
-awsc keeps its `awsc-*` sections in `~/.aws/config` in sync with its orgs and never touches anything else in that file.
+awsc keeps its `awsc-*` sections in `~/.aws/config` in sync with its orgs and never touches anything else in that file. Profiles from older versions named `awsc-<account>` are removed and recreated under the new name the next time they are used.
 
 ## Configuration
 

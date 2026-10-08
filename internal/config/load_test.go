@@ -180,7 +180,7 @@ func setupSession(t *testing.T, sessionOrg, awsConfig string) string {
 	if awsConfig != "" {
 		writeFile(t, filepath.Join(home, ".aws", "config"), awsConfig)
 	}
-	if err := SaveSession(os.Getppid(), "awsc-prod", "111111111111", "prod", "Admin", sessionOrg); err != nil {
+	if err := SaveSession(os.Getppid(), "awsc-prod/Admin", "111111111111", "prod", "Admin", sessionOrg); err != nil {
 		t.Fatal(err)
 	}
 	if err := ActivateOrg("alpha"); err != nil {
@@ -189,7 +189,7 @@ func setupSession(t *testing.T, sessionOrg, awsConfig string) string {
 	return home
 }
 
-const prodProfile = `[profile awsc-prod]
+const prodProfile = `[profile awsc-prod/Admin]
 sso_session = awsc-alpha
 sso_account_id = 111111111111
 sso_role_name = %s
@@ -224,9 +224,36 @@ func TestLoadAWSConfigWithProfile_RestoresDeletedProfile(t *testing.T) {
 		t.Fatalf("expected profile to be restored, got %v", err)
 	}
 	got := readFile(t, filepath.Join(home, ".aws", "config"))
-	for _, want := range []string{"[sso-session awsc-alpha]", "[profile awsc-prod]", "sso_role_name = Admin"} {
+	for _, want := range []string{"[sso-session awsc-alpha]", "[profile awsc-prod/Admin]", "sso_role_name = Admin"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q after restore:\n%s", want, got)
 		}
+	}
+}
+
+func TestLoadAWSConfigWithProfile_UpgradesProfileWithoutRole(t *testing.T) {
+	home := setupHome(t, twoOrgsYAML)
+	t.Setenv("AWSC_PROFILE", "")
+	path := filepath.Join(home, ".aws", "config")
+	writeFile(t, path, "[profile awsc-prod]\nsso_session = awsc-alpha\nsso_account_id = 111111111111\nsso_role_name = Admin\n")
+	if err := SaveSession(os.Getppid(), "awsc-prod", "111111111111", "prod", "Admin", "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ActivateOrg("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	original := sdkconfig.DefaultSharedConfigFiles
+	sdkconfig.DefaultSharedConfigFiles = []string{path}
+	defer func() { sdkconfig.DefaultSharedConfigFiles = original }()
+
+	if _, err := LoadAWSConfigWithProfile(context.Background()); err != nil {
+		t.Fatalf("expected the session to move to the new profile name, got %v", err)
+	}
+	got := readFile(t, path)
+	if strings.Contains(got, "[profile awsc-prod]") || !strings.Contains(got, "[profile awsc-prod/Admin]") {
+		t.Errorf("expected awsc-prod renamed to awsc-prod/Admin:\n%s", got)
+	}
+	if session, err := GetCurrentSession(); err != nil || session.ProfileName != "awsc-prod/Admin" {
+		t.Errorf("session not updated: %+v %v", session, err)
 	}
 }

@@ -388,17 +388,14 @@ func getAWSContext() *AWSContext {
 	var accountName, roleName string
 
 	if envProfile != "" {
-		// Parse profile name to extract account name
-		// Profile format: awsc-{accountName}
-		if strings.HasPrefix(envProfile, "awsc-") {
-			accountName = strings.TrimPrefix(envProfile, "awsc-")
-		} else {
-			accountName = envProfile
+		// Parse the profile name (awsc-{accountName}/{roleName}); session
+		// files below give the exact names when available.
+		accountName = strings.TrimPrefix(envProfile, "awsc-")
+		roleName = "unknown"
+		if i := strings.LastIndex(accountName, "/"); i >= 0 {
+			accountName, roleName = accountName[:i], accountName[i+1:]
 		}
 
-		// Try to get role from session files by matching profile name
-		// This is best effort - if not found, we'll show "unknown"
-		roleName = "unknown"
 		homeDir, err := os.UserHomeDir()
 		if err == nil {
 			sessionsDir := filepath.Join(homeDir, ".awsc", "sessions")

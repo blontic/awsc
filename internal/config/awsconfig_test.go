@@ -49,7 +49,7 @@ func TestSyncSessions_UpdatesChangedSettingsInPlace(t *testing.T) {
 
 func TestSyncSessions_RenamesSessionForSameStartURL(t *testing.T) {
 	content := strings.Replace(alphaSession, "awsc-alpha", "awsc-old", 1) + `
-[profile awsc-a]
+[profile awsc-a/R]
 sso_session = awsc-old
 sso_account_id = 111111111111
 sso_role_name = R
@@ -61,7 +61,7 @@ sso_role_name = R
 	if res.Renamed["awsc-old"] != "awsc-alpha" || strings.Contains(got, "awsc-old") {
 		t.Errorf("expected rename to awsc-alpha (%+v):\n%s", res, got)
 	}
-	if !strings.Contains(got, "[profile awsc-a]\nsso_session = awsc-alpha") || strings.Count(got, "[sso-session") != 1 {
+	if !strings.Contains(got, "[profile awsc-a/R]\nsso_session = awsc-alpha") || strings.Count(got, "[sso-session") != 1 {
 		t.Errorf("profile not repointed:\n%s", got)
 	}
 }
@@ -72,7 +72,7 @@ func TestSyncSessions_RemovesOrphansAndTheirProfiles(t *testing.T) {
 sso_start_url = https://gone.awsapps.com/start
 sso_region = us-east-1
 
-[profile awsc-gone-acct]
+[profile awsc-gone-acct/R]
 sso_session = awsc-gone
 sso_account_id = 111111111111
 sso_role_name = R
@@ -81,7 +81,7 @@ sso_role_name = R
 sso_session = awsc-gone
 role_arn = arn:aws:iam::111111111111:role/X
 
-[profile awsc-no-session]
+[profile awsc-no-session/R]
 sso_session = awsc-deleted-by-hand
 sso_account_id = 222222222222
 sso_role_name = R
@@ -109,6 +109,36 @@ sso_start_url = https://gone.awsapps.com/start
 	}
 }
 
+func TestSyncSessions_RemovesProfilesWithoutRole(t *testing.T) {
+	content := alphaSession + `
+[profile awsc-prod]
+sso_session = awsc-alpha
+sso_account_id = 111111111111
+sso_role_name = Admin
+
+[profile awsc-custom]
+sso_session = awsc-alpha
+role_arn = arn:aws:iam::111111111111:role/X
+
+[profile awsc-prod/Admin]
+sso_session = awsc-alpha
+sso_account_id = 111111111111
+sso_role_name = Admin
+`
+	got, res, err := syncSessions(content, map[string]OrgConfig{"alpha": alphaOrg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "[profile awsc-prod]") || len(res.RemovedProfiles) != 1 {
+		t.Errorf("profile without a role not removed (%+v):\n%s", res, got)
+	}
+	for _, keep := range []string{"[profile awsc-custom]", "[profile awsc-prod/Admin]"} {
+		if !strings.Contains(got, keep) {
+			t.Errorf("%q should be kept:\n%s", keep, got)
+		}
+	}
+}
+
 func TestSyncSessions_RefusesUserOwnedSessionName(t *testing.T) {
 	content := "[sso-session awsc-alpha]\nsso_start_url = https://alpha.awsapps.com/start\ncustom = x\n"
 	if _, _, err := syncSessions(content, map[string]OrgConfig{"alpha": alphaOrg}); err == nil {
@@ -120,12 +150,12 @@ func TestUpsertProfile(t *testing.T) {
 	p := Profile{Org: "alpha", AccountName: "prod", AccountID: "111111111111", RoleName: "Admin"}
 
 	got, name, err := upsertProfile("[default]\n", p, "ap-southeast-2")
-	if err != nil || name != "awsc-prod" {
+	if err != nil || name != "awsc-prod/Admin" {
 		t.Fatalf("upsertProfile = %q, %v", name, err)
 	}
 	want := `[default]
 
-[profile awsc-prod]
+[profile awsc-prod/Admin]
 # Account: prod
 sso_session = awsc-alpha
 sso_account_id = 111111111111
@@ -136,20 +166,27 @@ region = ap-southeast-2
 		t.Errorf("unexpected content:\n%s", got)
 	}
 
+	again, _, err := upsertProfile(got, p, "ap-southeast-2")
+	if err != nil || again != got {
+		t.Errorf("expected rewriting the same profile to be a no-op (%v):\n%s", err, again)
+	}
+
+	// Another role in the same account gets its own profile alongside.
 	p.RoleName = "ReadOnly"
-	updated, _, err := upsertProfile(got, p, "ap-southeast-2")
-	if err != nil || updated != strings.ReplaceAll(want, "Admin", "ReadOnly") {
-		t.Errorf("expected in-place role update (%v):\n%s", err, updated)
+	both, name, err := upsertProfile(got, p, "ap-southeast-2")
+	if err != nil || name != "awsc-prod/ReadOnly" || !strings.Contains(both, "[profile awsc-prod/Admin]") || !strings.Contains(both, "[profile awsc-prod/ReadOnly]") {
+		t.Errorf("expected separate profiles per role (%q, %v):\n%s", name, err, both)
 	}
 
 	// Same account name in another org gets a prefixed profile.
 	other := Profile{Org: "beta", AccountName: "prod", AccountID: "222222222222", RoleName: "Admin"}
-	if _, name, _ := upsertProfile(got, other, ""); name != "awsc-beta-prod" {
+	if _, name, _ := upsertProfile(got, other, ""); name != "awsc-beta-prod/Admin" {
 		t.Errorf("expected prefixed name for clash, got %s", name)
 	}
 
 	// User-customised profile is never overwritten.
-	custom := "[profile awsc-prod]\nrole_arn = arn:aws:iam::111111111111:role/X\n"
+	p.RoleName = "Admin"
+	custom := "[profile awsc-prod/Admin]\nrole_arn = arn:aws:iam::111111111111:role/X\n"
 	if _, _, err := upsertProfile(custom, p, ""); err == nil {
 		t.Error("expected error overwriting a user profile")
 	}
@@ -165,12 +202,12 @@ func TestWriteProfile(t *testing.T) {
 
 	orgs := map[string]OrgConfig{"alpha": alphaOrg}
 	name, err := WriteProfile(orgs, Profile{Org: "alpha", AccountName: "prod", AccountID: "111111111111", RoleName: "Admin"})
-	if err != nil || name != "awsc-prod" {
+	if err != nil || name != "awsc-prod/Admin" {
 		t.Fatalf("WriteProfile = %q, %v", name, err)
 	}
 
 	got := readFile(t, path)
-	for _, want := range []string{"[default]", "[sso-session awsc-alpha]", "[profile awsc-prod]", "sso_session = awsc-alpha"} {
+	for _, want := range []string{"[default]", "[sso-session awsc-alpha]", "[profile awsc-prod/Admin]", "sso_session = awsc-alpha"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q:\n%s", want, got)
 		}
@@ -213,7 +250,7 @@ func TestWriteProfile_PreservesSymlink(t *testing.T) {
 	if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
 		t.Error("symlink was replaced with a regular file")
 	}
-	if !strings.Contains(readFile(t, target), "[profile awsc-a]") {
+	if !strings.Contains(readFile(t, target), "[profile awsc-a/R]") {
 		t.Error("profile not written to symlink target")
 	}
 }
