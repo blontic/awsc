@@ -54,11 +54,12 @@ func init() {
 }
 
 // needsOrg reports whether a command works with AWS or the awsc config. Help,
-// version and shell completion must not migrate, sync or prompt.
+// version and shell completion must not migrate, sync or prompt; status only
+// reads (it sets up the org itself for --check).
 func needsOrg(cmd *cobra.Command) bool {
 	for c := cmd; c != nil; c = c.Parent() {
 		switch c.Name() {
-		case "help", "version", "completion", cobra.ShellCompRequestCmd, cobra.ShellCompNoDescRequestCmd:
+		case "help", "version", "completion", "status", cobra.ShellCompRequestCmd, cobra.ShellCompNoDescRequestCmd:
 			return false
 		}
 	}

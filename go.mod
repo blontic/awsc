@@ -15,6 +15,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.79.0
 	github.com/aws/aws-sdk-go-v2/service/sso v1.38.1
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.43.1
+	github.com/aws/aws-sdk-go-v2/service/sts v1.51.1
 	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/spf13/cobra v1.10.2
 	go.uber.org/mock v0.6.0
@@ -29,7 +30,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.19 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.14.4 // indirect
 	github.com/aws/aws-sdk-go-v2/service/signin v1.10.1 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sts v1.51.1 // indirect
 	github.com/aws/smithy-go v1.28.2 // indirect
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
 	github.com/charmbracelet/ultraviolet v0.0.0-20261001125412-878653296cfd // indirect
