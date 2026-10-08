@@ -2,12 +2,13 @@ package aws
 
 import (
 	"context"
+	awscconfig "github.com/blontic/awsc/internal/config"
+	"github.com/blontic/awsc/internal/ui"
 	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sso/types"
-	"github.com/spf13/viper"
 )
 
 func TestNewSSOManager(t *testing.T) {
@@ -112,9 +113,9 @@ func TestSSOManager_RunLogin_ConfigValidation(t *testing.T) {
 	ctx := context.Background()
 	manager := &SSOManager{}
 
-	// Clear any existing viper config
-	viper.Reset()
-	defer viper.Reset()
+	// Clear any existing active settings
+	awscconfig.SetActive(awscconfig.Settings{})
+	defer func() { awscconfig.SetActive(awscconfig.Settings{}) }()
 
 	// Test with no SSO configuration
 	err := manager.RunLogin(ctx, false, "", "")
@@ -135,8 +136,8 @@ func TestSSOManager_RunLogin_ParameterHandling(t *testing.T) {
 	manager := &SSOManager{}
 
 	// Test with no config - should fail immediately without authentication
-	viper.Reset()
-	defer viper.Reset()
+	awscconfig.SetActive(awscconfig.Settings{})
+	defer func() { awscconfig.SetActive(awscconfig.Settings{}) }()
 
 	err := manager.RunLogin(ctx, false, "test-account", "test-role")
 	if err == nil {
@@ -234,5 +235,19 @@ func TestSSOManager_AccountRoleMatching(t *testing.T) {
 	}
 	if foundRole != nil {
 		t.Error("Should not find non-existent role")
+	}
+}
+
+func TestLoginContext(t *testing.T) {
+	awscconfig.SetActive(awscconfig.Settings{Org: "woodside", DefaultRegion: "ap-southeast-2", SSORegion: "us-east-1"})
+	defer awscconfig.SetActive(awscconfig.Settings{})
+
+	got := loginContext("")
+	if *got != (ui.AWSContext{Org: "woodside", Region: "ap-southeast-2"}) {
+		t.Errorf("account picker context = %+v", *got)
+	}
+	got = loginContext("wpl-wrk-f27-prd")
+	if *got != (ui.AWSContext{Org: "woodside", Account: "wpl-wrk-f27-prd", Region: "ap-southeast-2"}) {
+		t.Errorf("role picker context = %+v", *got)
 	}
 }

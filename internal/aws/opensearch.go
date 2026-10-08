@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -75,7 +76,7 @@ func (o *OpenSearchManager) RunConnect(ctx context.Context, domainName string, l
 	}
 
 	if len(domains) == 0 {
-		return fmt.Errorf("no OpenSearch domains found")
+		return notFoundError("OpenSearch domains", o.region)
 	}
 
 	var selectedDomain OpenSearchDomain
@@ -91,10 +92,10 @@ func (o *OpenSearchManager) RunConnect(ctx context.Context, domainName string, l
 		}
 
 		if targetDomain != nil {
-			fmt.Printf("Connecting to OpenSearch domain: %s\n", targetDomain.Name)
+			fmt.Fprintf(os.Stderr, "Connecting to OpenSearch domain: %s\n", targetDomain.Name)
 			selectedDomain = *targetDomain
 		} else {
-			return fmt.Errorf("OpenSearch domain '%s' not found", domainName)
+			return namedNotFoundError("OpenSearch domain", domainName, o.region)
 		}
 	}
 
@@ -116,9 +117,7 @@ func (o *OpenSearchManager) RunConnect(ctx context.Context, domainName string, l
 		}
 
 		selectedDomain = domains[selectedIndex]
-		fmt.Printf("✓ Selected: %s\n", selectedDomain.Name)
-	} else {
-		fmt.Printf("✓ Selected: %s\n", selectedDomain.Name)
+		fmt.Fprintf(os.Stderr, "✓ Selected: %s\n", selectedDomain.Name)
 	}
 
 	// Find bastion hosts
@@ -145,10 +144,10 @@ func (o *OpenSearchManager) RunConnect(ctx context.Context, domainName string, l
 			return fmt.Errorf("no bastion selected")
 		}
 		bastion = bastions[selectedIndex]
-		fmt.Printf("✓ Selected bastion: %s (%s)\n", bastion.Name, bastion.InstanceId)
+		fmt.Fprintf(os.Stderr, "✓ Selected bastion: %s (%s)\n", bastion.Name, bastion.InstanceId)
 	} else {
 		bastion = bastions[0]
-		fmt.Printf("Using bastion: %s (%s)\n", bastion.Name, bastion.InstanceId)
+		fmt.Fprintf(os.Stderr, "Using bastion: %s (%s)\n", bastion.Name, bastion.InstanceId)
 	}
 
 	// Start port forwarding
@@ -157,23 +156,11 @@ func (o *OpenSearchManager) RunConnect(ctx context.Context, domainName string, l
 
 func (o *OpenSearchManager) ListOpenSearchDomains(ctx context.Context) ([]OpenSearchDomain, error) {
 	// List domain names
-	result, err := o.opensearchClient.ListDomainNames(ctx, &opensearch.ListDomainNamesInput{})
+	result, err := withReauth(ctx, o.reloadClients, func() (*opensearch.ListDomainNamesOutput, error) {
+		return o.opensearchClient.ListDomainNames(ctx, &opensearch.ListDomainNamesInput{})
+	})
 	if err != nil {
-		if IsAuthError(err) {
-			if shouldReauth, reAuthErr := PromptForReauth(ctx); shouldReauth && reAuthErr == nil {
-				if reloadErr := o.reloadClients(ctx); reloadErr != nil {
-					return nil, reloadErr
-				}
-				result, err = o.opensearchClient.ListDomainNames(ctx, &opensearch.ListDomainNamesInput{})
-				if err != nil {
-					return nil, err
-				}
-			} else {
-				return nil, err
-			}
-		} else {
-			return nil, err
-		}
+		return nil, err
 	}
 
 	var domains []OpenSearchDomain
@@ -183,29 +170,18 @@ func (o *OpenSearchManager) ListOpenSearchDomains(ctx context.Context) ([]OpenSe
 		}
 
 		// Get domain details
-		domainDetail, err := o.opensearchClient.DescribeDomain(ctx, &opensearch.DescribeDomainInput{
-			DomainName: domainInfo.DomainName,
+		domainDetail, err := withReauth(ctx, o.reloadClients, func() (*opensearch.DescribeDomainOutput, error) {
+			return o.opensearchClient.DescribeDomain(ctx, &opensearch.DescribeDomainInput{
+				DomainName: domainInfo.DomainName,
+			})
 		})
 		if err != nil {
 			if IsAuthError(err) {
-				if shouldReauth, reAuthErr := PromptForReauth(ctx); shouldReauth && reAuthErr == nil {
-					if reloadErr := o.reloadClients(ctx); reloadErr != nil {
-						return nil, reloadErr
-					}
-					domainDetail, err = o.opensearchClient.DescribeDomain(ctx, &opensearch.DescribeDomainInput{
-						DomainName: domainInfo.DomainName,
-					})
-					if err != nil {
-						debug.Printf("Error describing domain %s: %v\n", *domainInfo.DomainName, err)
-						continue
-					}
-				} else {
-					return nil, err
-				}
-			} else {
-				debug.Printf("Error describing domain %s: %v\n", *domainInfo.DomainName, err)
-				continue
+				return nil, err // login declined or still failing
 			}
+			// Skip domains that cannot be described rather than failing the list.
+			debug.Printf("Error describing domain %s: %v\n", *domainInfo.DomainName, err)
+			continue
 		}
 
 		domain := domainDetail.DomainStatus
@@ -278,27 +254,13 @@ func (o *OpenSearchManager) FindBastionHosts(ctx context.Context, domain OpenSea
 	var nextToken *string
 
 	for {
-		result, err := o.ec2Client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
-			NextToken: nextToken,
+		result, err := withReauth(ctx, o.reloadClients, func() (*ec2.DescribeInstancesOutput, error) {
+			return o.ec2Client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+				NextToken: nextToken,
+			})
 		})
 		if err != nil {
-			if IsAuthError(err) {
-				if shouldReauth, reAuthErr := PromptForReauth(ctx); shouldReauth && reAuthErr == nil {
-					if reloadErr := o.reloadClients(ctx); reloadErr != nil {
-						return nil, reloadErr
-					}
-					result, err = o.ec2Client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
-						NextToken: nextToken,
-					})
-					if err != nil {
-						return nil, err
-					}
-				} else {
-					return nil, err
-				}
-			} else {
-				return nil, err
-			}
+			return nil, err
 		}
 
 		allReservations = append(allReservations, result.Reservations...)
@@ -363,29 +325,29 @@ func (o *OpenSearchManager) FindBastionHosts(ctx context.Context, domain OpenSea
 
 	// No bastion found - show helpful error
 	if stoppedInstances > 0 {
-		fmt.Printf("\nFound %d stopped EC2 instance(s):\n", stoppedInstances)
+		fmt.Fprintf(os.Stderr, "\nFound %d stopped EC2 instance(s):\n", stoppedInstances)
 		for _, name := range stoppedInstanceNames {
-			fmt.Printf("- %s (stopped)\n", name)
+			fmt.Fprintf(os.Stderr, "- %s (stopped)\n", name)
 		}
-		fmt.Printf("\n")
+		fmt.Fprintf(os.Stderr, "\n")
 	}
 
 	if runningInstances == 0 {
-		fmt.Printf("No running EC2 instances found in region %s.\n", o.region)
-		fmt.Printf("To use OpenSearch port forwarding, you need a running EC2 instance with:\n")
-		fmt.Printf("- SSM agent installed and configured\n")
-		fmt.Printf("- Network access to the OpenSearch domain\n")
+		fmt.Fprintf(os.Stderr, "No running EC2 instances found in %s.\n", location(o.region))
+		fmt.Fprintf(os.Stderr, "To use OpenSearch port forwarding, you need a running EC2 instance with:\n")
+		fmt.Fprintf(os.Stderr, "- SSM agent installed and configured\n")
+		fmt.Fprintf(os.Stderr, "- Network access to the OpenSearch domain\n")
 		if stoppedInstances > 0 {
-			fmt.Printf("\nYou can start one of the stopped instances above and try again.\n")
-			return nil, fmt.Errorf("no running bastion hosts found - %d stopped instances available", stoppedInstances)
+			fmt.Fprintf(os.Stderr, "\nYou can start one of the stopped instances above and try again.\n")
+			return nil, fmt.Errorf("no running bastion hosts found in %s - %d stopped instances available", location(o.region), stoppedInstances)
 		}
-		fmt.Printf("\nAlternatively, you can connect directly if your OpenSearch domain is publicly accessible.\n")
-		return nil, fmt.Errorf("no running EC2 instances found in region %s", o.region)
+		fmt.Fprintf(os.Stderr, "\nAlternatively, you can connect directly if your OpenSearch domain is publicly accessible.\n")
+		return nil, notFoundError("running EC2 instances", o.region)
 	}
 
-	fmt.Printf("Found %d running EC2 instances but none can connect to OpenSearch %s.\n", runningInstances, domain.Name)
-	fmt.Printf("This usually means the security groups don't allow the connection.\n")
-	return nil, fmt.Errorf("no suitable bastion hosts found - security groups may not allow connection")
+	fmt.Fprintf(os.Stderr, "Found %d running EC2 instances but none can connect to OpenSearch %s.\n", runningInstances, domain.Name)
+	fmt.Fprintf(os.Stderr, "This usually means the security groups don't allow the connection.\n")
+	return nil, fmt.Errorf("no suitable bastion hosts found in %s - security groups may not allow connection", location(o.region))
 }
 
 func (o *OpenSearchManager) StartPortForwarding(ctx context.Context, bastionId, opensearchEndpoint string, opensearchPort, localPort int32) error {
@@ -397,38 +359,24 @@ func (o *OpenSearchManager) StartPortForwarding(ctx context.Context, bastionId, 
 
 	pf := NewExternalPluginForwarder(cfg)
 
-	fmt.Printf("Starting port forwarding...\n")
+	fmt.Fprintf(os.Stderr, "Starting port forwarding...\n")
 
 	// Start port forwarding to remote host through bastion
 	return pf.StartPortForwardingToRemoteHost(ctx, bastionId, opensearchEndpoint, int(opensearchPort), int(localPort))
 }
 
 func (o *OpenSearchManager) getOpenSearchSecurityGroups(ctx context.Context, domain OpenSearchDomain) ([]string, error) {
-	result, err := o.opensearchClient.DescribeDomain(ctx, &opensearch.DescribeDomainInput{
-		DomainName: aws.String(domain.Name),
+	result, err := withReauth(ctx, o.reloadClients, func() (*opensearch.DescribeDomainOutput, error) {
+		return o.opensearchClient.DescribeDomain(ctx, &opensearch.DescribeDomainInput{
+			DomainName: aws.String(domain.Name),
+		})
 	})
 	if err != nil {
-		if IsAuthError(err) {
-			if shouldReauth, reAuthErr := PromptForReauth(ctx); shouldReauth && reAuthErr == nil {
-				if reloadErr := o.reloadClients(ctx); reloadErr != nil {
-					return nil, reloadErr
-				}
-				result, err = o.opensearchClient.DescribeDomain(ctx, &opensearch.DescribeDomainInput{
-					DomainName: aws.String(domain.Name),
-				})
-				if err != nil {
-					return nil, err
-				}
-			} else {
-				return nil, err
-			}
-		} else {
-			return nil, err
-		}
+		return nil, err
 	}
 
 	if result.DomainStatus == nil || result.DomainStatus.VPCOptions == nil {
-		return nil, fmt.Errorf("OpenSearch domain not found or not in VPC")
+		return nil, fmt.Errorf("OpenSearch domain not found or not in a VPC in %s", location(o.region))
 	}
 
 	return result.DomainStatus.VPCOptions.SecurityGroupIds, nil
@@ -437,27 +385,13 @@ func (o *OpenSearchManager) getOpenSearchSecurityGroups(ctx context.Context, dom
 func (o *OpenSearchManager) fetchSecurityGroupRules(ctx context.Context, sgIds []string) (map[string][]types.IpPermission, error) {
 	cache := make(map[string][]types.IpPermission, len(sgIds))
 	for _, sgId := range sgIds {
-		result, err := o.ec2Client.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
-			GroupIds: []string{sgId},
+		result, err := withReauth(ctx, o.reloadClients, func() (*ec2.DescribeSecurityGroupsOutput, error) {
+			return o.ec2Client.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
+				GroupIds: []string{sgId},
+			})
 		})
 		if err != nil {
-			if IsAuthError(err) {
-				if shouldReauth, reAuthErr := PromptForReauth(ctx); shouldReauth && reAuthErr == nil {
-					if reloadErr := o.reloadClients(ctx); reloadErr != nil {
-						return nil, reloadErr
-					}
-					result, err = o.ec2Client.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
-						GroupIds: []string{sgId},
-					})
-					if err != nil {
-						return nil, err
-					}
-				} else {
-					return nil, err
-				}
-			} else {
-				return nil, err
-			}
+			return nil, err
 		}
 		if len(result.SecurityGroups) > 0 {
 			cache[sgId] = result.SecurityGroups[0].IpPermissions

@@ -62,29 +62,13 @@ func (s *SecretsManager) ListSecrets(ctx context.Context) ([]Secret, error) {
 	var nextToken *string
 
 	for {
-		result, err := s.client.ListSecrets(ctx, &secretsmanager.ListSecretsInput{
-			NextToken: nextToken,
+		result, err := withReauth(ctx, s.reloadClient, func() (*secretsmanager.ListSecretsOutput, error) {
+			return s.client.ListSecrets(ctx, &secretsmanager.ListSecretsInput{
+				NextToken: nextToken,
+			})
 		})
 		if err != nil {
-			if IsAuthError(err) {
-				if shouldReauth, reAuthErr := PromptForReauth(ctx); shouldReauth && reAuthErr == nil {
-					// Reload client with fresh credentials
-					if reloadErr := s.reloadClient(ctx); reloadErr != nil {
-						return nil, reloadErr
-					}
-					// Retry after re-authentication
-					result, err = s.client.ListSecrets(ctx, &secretsmanager.ListSecretsInput{
-						NextToken: nextToken,
-					})
-					if err != nil {
-						return nil, err
-					}
-				} else {
-					return nil, err
-				}
-			} else {
-				return nil, err
-			}
+			return nil, err
 		}
 
 		allSecrets = append(allSecrets, result.SecretList...)
@@ -118,29 +102,13 @@ func (s *SecretsManager) ListSecrets(ctx context.Context) ([]Secret, error) {
 }
 
 func (s *SecretsManager) GetSecretValue(ctx context.Context, secretName string) (string, error) {
-	result, err := s.client.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{
-		SecretId: aws.String(secretName),
+	result, err := withReauth(ctx, s.reloadClient, func() (*secretsmanager.GetSecretValueOutput, error) {
+		return s.client.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{
+			SecretId: aws.String(secretName),
+		})
 	})
 	if err != nil {
-		if IsAuthError(err) {
-			if shouldReauth, reAuthErr := PromptForReauth(ctx); shouldReauth && reAuthErr == nil {
-				// Reload client with fresh credentials
-				if reloadErr := s.reloadClient(ctx); reloadErr != nil {
-					return "", reloadErr
-				}
-				// Retry after re-authentication
-				result, err = s.client.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{
-					SecretId: aws.String(secretName),
-				})
-				if err != nil {
-					return "", err
-				}
-			} else {
-				return "", err
-			}
-		} else {
-			return "", err
-		}
+		return "", err
 	}
 
 	if result.SecretString != nil {
@@ -150,8 +118,10 @@ func (s *SecretsManager) GetSecretValue(ctx context.Context, secretName string) 
 	return string(result.SecretBinary), nil
 }
 
+// DisplaySecret writes the secret value (pretty-printed if JSON) to stdout, so
+// it can be piped or captured; the spacing line goes to stderr.
 func (s *SecretsManager) DisplaySecret(ctx context.Context, secretName, secretValue string) {
-	fmt.Printf("\n")
+	fmt.Fprintln(os.Stderr)
 
 	// Try to parse as JSON for pretty printing
 	var jsonData interface{}
@@ -173,7 +143,7 @@ func (s *SecretsManager) RunShowSecrets(ctx context.Context, secretName string) 
 		// Get secret value
 		secretValue, err := s.GetSecretValue(ctx, secretName)
 		if err != nil {
-			return fmt.Errorf("secret '%s' not found: %v", secretName, err)
+			return fmt.Errorf("secret '%s' not found in %s: %v", secretName, location(s.region), err)
 		} else {
 			// Display the secret and return
 			s.DisplaySecret(ctx, secretName, secretValue)
@@ -188,8 +158,7 @@ func (s *SecretsManager) RunShowSecrets(ctx context.Context, secretName string) 
 	}
 
 	if len(secrets) == 0 {
-		fmt.Fprintf(os.Stderr, "No secrets found in this account\n")
-		return nil
+		return notFoundError("secrets", s.region)
 	}
 
 	// Create selection choices

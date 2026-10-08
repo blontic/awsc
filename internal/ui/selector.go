@@ -7,10 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	awscconfig "github.com/blontic/awsc/internal/config"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/spf13/viper"
 )
 
 type SelectorModel struct {
@@ -25,9 +24,11 @@ type SelectorModel struct {
 	title              string
 	done               bool
 	awsContext         *AWSContext
+	width, height      int // terminal size; 0 until known
 }
 
 type AWSContext struct {
+	Org     string
 	Account string
 	Role    string
 	Region  string
@@ -75,11 +76,17 @@ func (m SelectorModel) Init() tea.Cmd {
 func (m SelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		// Handle window resize - no action needed, just return
+		resized := m.width != 0 && (msg.Width != m.width || msg.Height != m.height)
+		m.width, m.height = msg.Width, msg.Height
+		if resized {
+			// The terminal re-wraps lines drawn at the old width, so an inline
+			// redraw would leave stale lines behind; redraw from a clear screen.
+			return m, tea.ClearScreen
+		}
 		return m, nil
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "ctrl+c", "q":
+		case "ctrl+c":
 			return m, tea.Quit
 		case "up", "k":
 			for i := m.cursor - 1; i >= 0; i-- {
@@ -95,7 +102,7 @@ func (m SelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					break
 				}
 			}
-		case "enter", " ":
+		case "enter", "space":
 			if len(m.filteredChoices) > 0 && m.cursor < len(m.filteredSelectable) && m.filteredSelectable[m.cursor] {
 				m.selected = m.filterIndices[m.cursor]
 				m.done = true
@@ -108,13 +115,17 @@ func (m SelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.resetCursor()
 			}
 		case "esc":
+			// Esc clears the filter, or quits if there is none.
+			if m.filter == "" {
+				return m, tea.Quit
+			}
 			m.filter = ""
 			m.updateFilter()
 			m.resetCursor()
 		default:
 			// Handle typing for filtering
-			if len(msg.String()) == 1 && msg.String() >= " " && msg.String() <= "~" {
-				m.filter += msg.String()
+			if len(msg.Text) == 1 && msg.Text > " " && msg.Text <= "~" {
+				m.filter += msg.Text
 				m.updateFilter()
 				m.resetCursor()
 			}
@@ -123,7 +134,14 @@ func (m SelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m SelectorModel) View() string {
+// View draws the selector inline below the existing output; it clears itself
+// when a choice is made.
+func (m SelectorModel) View() tea.View {
+	return tea.NewView(m.render())
+}
+
+// render returns the selector's screen content.
+func (m SelectorModel) render() string {
 	if m.done {
 		return ""
 	}
@@ -131,16 +149,8 @@ func (m SelectorModel) View() string {
 	s := strings.Builder{}
 
 	// AWS Context Header
-	if m.awsContext != nil {
-		// Style for values - bright green
-		valueStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
-
-		headerText := fmt.Sprintf("Account: %s | Role: %s | Region: %s",
-			valueStyle.Render(m.awsContext.Account),
-			valueStyle.Render(m.awsContext.Role),
-			valueStyle.Render(m.awsContext.Region))
-
-		s.WriteString(headerText)
+	if header := m.awsContext.header(); header != "" {
+		s.WriteString(header)
 		s.WriteString("\n\n")
 	}
 
@@ -154,7 +164,12 @@ func (m SelectorModel) View() string {
 	if len(m.filteredChoices) == 0 {
 		s.WriteString("No matches found\n")
 	} else {
-		for i, choice := range m.filteredChoices {
+		start, end := m.visibleRange(m.screenLines(s.String()))
+		if start > 0 {
+			s.WriteString(fmt.Sprintf("  ↑ %d more\n", start))
+		}
+		for i := start; i < end; i++ {
+			choice := m.fitWidth(m.filteredChoices[i])
 			if !m.filteredSelectable[i] {
 				s.WriteString(fmt.Sprintf("  %s (disabled)\n", choice))
 			} else if m.cursor == i {
@@ -164,10 +179,61 @@ func (m SelectorModel) View() string {
 				s.WriteString(fmt.Sprintf("  %s\n", choice))
 			}
 		}
+		if end < len(m.filteredChoices) {
+			s.WriteString(fmt.Sprintf("  ↓ %d more\n", len(m.filteredChoices)-end))
+		}
 	}
 
-	s.WriteString("\nPress ↑/↓ to navigate, Enter to select, type to filter, ESC to clear filter, q to quit\n")
+	s.WriteString(selectorFooter)
 	return s.String()
+}
+
+// fitWidth shortens a choice with "…" so its row (with the cursor prefix and
+// " (disabled)" suffix) does not wrap.
+func (m SelectorModel) fitWidth(choice string) string {
+	maxWidth := m.width - lipgloss.Width("▶ ") - lipgloss.Width(" (disabled)")
+	if m.width <= 0 || maxWidth < 1 || lipgloss.Width(choice) <= maxWidth {
+		return choice
+	}
+	runes := []rune(choice)
+	for len(runes) > 0 && lipgloss.Width(string(runes))+1 > maxWidth {
+		runes = runes[:len(runes)-1]
+	}
+	return string(runes) + "…"
+}
+
+const selectorFooter = "\n↑/↓ navigate · Enter select · type to filter · Esc clear filter / quit\n"
+
+// screenLines returns how many terminal rows text occupies, including lines
+// that wrap because they are wider than the terminal.
+func (m SelectorModel) screenLines(text string) int {
+	lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
+	if m.width <= 0 {
+		return len(lines)
+	}
+	total := 0
+	for _, line := range lines {
+		total += max(1, (lipgloss.Width(line)+m.width-1)/m.width)
+	}
+	return total
+}
+
+// visibleRange returns the slice of filtered choices that fits the terminal
+// below usedLines of header, keeping the cursor in view, so the title and
+// context header never scroll off screen.
+func (m SelectorModel) visibleRange(usedLines int) (start, end int) {
+	n := len(m.filteredChoices)
+	const indicatorLines = 2
+	rows := m.height - usedLines - m.screenLines(selectorFooter) - indicatorLines
+	if m.height == 0 || n <= rows+indicatorLines {
+		return 0, n
+	}
+	if rows < 1 {
+		rows = 1
+	}
+	start = m.cursor - rows/2
+	start = max(0, min(start, n-rows))
+	return start, start + rows
 }
 
 func (m *SelectorModel) updateFilter() {
@@ -200,9 +266,37 @@ func (m SelectorModel) Selected() int {
 	return m.selected
 }
 
+// header renders the context line ("Org: x | Account: y | ..."), showing only
+// the fields that are set.
+func (c *AWSContext) header() string {
+	if c == nil {
+		return ""
+	}
+	valueStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
+	var parts []string
+	for _, f := range []struct{ label, value string }{
+		{"Org", c.Org}, {"Account", c.Account}, {"Role", c.Role}, {"Region", c.Region},
+	} {
+		if f.value != "" {
+			parts = append(parts, f.label+": "+valueStyle.Render(f.value))
+		}
+	}
+	return strings.Join(parts, " | ")
+}
+
+// RunSelector shows a selector whose header is the terminal's current AWS
+// context.
 func RunSelector(title string, choices []string) (int, error) {
+	return RunSelectorWithContext(title, choices, getAWSContext())
+}
+
+// RunSelectorWithContext shows a selector with the given header context, for
+// choices made before the terminal's context exists (e.g. picking an account
+// and role during login).
+func RunSelectorWithContext(title string, choices []string, ctx *AWSContext) (int, error) {
 	// Try interactive mode first
 	model := NewSelector(title, choices)
+	model.awsContext = ctx
 	p := tea.NewProgram(model)
 
 	finalModel, err := p.Run()
@@ -237,12 +331,12 @@ func RunSelectorWithSelectability(title string, choices []string, selectable []b
 }
 
 func runSimpleSelector(title string, choices []string) (int, error) {
-	fmt.Println(title)
+	fmt.Fprintln(os.Stderr, title)
 	for i, choice := range choices {
-		fmt.Printf("%d. %s\n", i+1, choice)
+		fmt.Fprintf(os.Stderr, "%d. %s\n", i+1, choice)
 	}
 
-	fmt.Print("Select (number): ")
+	fmt.Fprint(os.Stderr, "Select (number): ")
 	var choice int
 	if _, err := fmt.Scanln(&choice); err != nil {
 		return -1, err
@@ -256,8 +350,8 @@ func runSimpleSelector(title string, choices []string) (int, error) {
 }
 
 func runSimpleSelectorWithSelectability(title string, choices []string, selectable []bool) (int, error) {
-	fmt.Println(title)
-	fmt.Println("(Filtering not available in non-interactive mode)")
+	fmt.Fprintln(os.Stderr, title)
+	fmt.Fprintln(os.Stderr, "(Filtering not available in non-interactive mode)")
 	selectableChoices := make([]string, 0)
 	indexMap := make([]int, 0)
 
@@ -266,15 +360,15 @@ func runSimpleSelectorWithSelectability(title string, choices []string, selectab
 			selectableChoices = append(selectableChoices, choice)
 			indexMap = append(indexMap, i)
 		} else {
-			fmt.Printf("   %s (unavailable)\n", choice)
+			fmt.Fprintf(os.Stderr, "   %s (unavailable)\n", choice)
 		}
 	}
 
 	for i, choice := range selectableChoices {
-		fmt.Printf("%d. %s\n", i+1, choice)
+		fmt.Fprintf(os.Stderr, "%d. %s\n", i+1, choice)
 	}
 
-	fmt.Print("Select (number): ")
+	fmt.Fprint(os.Stderr, "Select (number): ")
 	var choice int
 	if _, err := fmt.Scanln(&choice); err != nil {
 		return -1, err
@@ -339,15 +433,16 @@ func getAWSContext() *AWSContext {
 	}
 
 	// Get region from config
-	region := viper.GetString("default_region")
+	region := awscconfig.Active().DefaultRegion
 	if region == "" {
-		region = viper.GetString("sso.region")
+		region = awscconfig.Active().SSORegion
 	}
 	if region == "" {
 		region = "default"
 	}
 
 	return &AWSContext{
+		Org:     awscconfig.Active().Org,
 		Account: accountName,
 		Role:    roleName,
 		Region:  region,

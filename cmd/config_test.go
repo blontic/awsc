@@ -10,8 +10,8 @@ func TestConfigCommands(t *testing.T) {
 		t.Error("configCmd should not be nil")
 	}
 
-	if configInitCmd == nil {
-		t.Error("configInitCmd should not be nil")
+	if configAddCmd == nil {
+		t.Error("configAddCmd should not be nil")
 	}
 
 	if configShowCmd == nil {
@@ -19,29 +19,25 @@ func TestConfigCommands(t *testing.T) {
 	}
 }
 
-func TestConfigInitCommand(t *testing.T) {
-	// Test command properties
-	if configInitCmd.Use != "init" {
-		t.Errorf("Expected Use 'init', got '%s'", configInitCmd.Use)
+func TestConfigAddCommand(t *testing.T) {
+	if configAddCmd.Use != "add [name]" {
+		t.Errorf("Expected Use 'add [name]', got '%s'", configAddCmd.Use)
 	}
-
-	if configInitCmd.Short == "" {
-		t.Error("configInitCmd should have Short description")
+	if configAddCmd.Run == nil {
+		t.Error("configAddCmd should have Run function")
 	}
-
-	if configInitCmd.Run == nil {
-		t.Error("configInitCmd should have Run function")
+	// Config commands must skip the root pre-run (no active org required)
+	if configCmd.PersistentPreRun == nil {
+		t.Error("configCmd should have PersistentPreRun to skip root pre-run checks")
 	}
-
-	// Test that PreRun is set to skip persistent pre-run
-	if configInitCmd.PreRun == nil {
-		t.Error("configInitCmd should have PreRun to skip persistent pre-run")
+	if !configAddCmd.HasAlias("init") {
+		t.Error("'config init' should remain as an alias of 'config add' for backward compatibility")
 	}
 }
 
 func TestConfigShowCommand(t *testing.T) {
 	// Test command properties
-	if configShowCmd.Use != "show" {
+	if configShowCmd.Use != "show [name]" {
 		t.Errorf("Expected Use 'show', got '%s'", configShowCmd.Use)
 	}
 

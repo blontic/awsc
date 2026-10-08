@@ -7,12 +7,16 @@ import (
 	"github.com/blontic/awsc/internal/config"
 	"github.com/blontic/awsc/internal/debug"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
-var cfgFile string
+var removedConfigFlag string
 var regionOverride string
 var verbose bool
+var orgFlag string
+
+// orgErr records a failure to set up the active org. Commands that need an
+// org exit with it; config management commands report it only when relevant.
+var orgErr error
 
 var rootCmd = &cobra.Command{
 	Use:   "awsc",
@@ -20,10 +24,15 @@ var rootCmd = &cobra.Command{
 	Long:  `AWS Connect - A CLI tool for AWS SSO authentication, RDS port forwarding, EC2 sessions, and Secrets Manager operations.`,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		debug.SetVerbose(verbose)
-		if err := config.EnsureConfigExists(); err != nil {
-			fmt.Printf("Error setting up configuration: %v\n", err)
-			os.Exit(1)
+		if !needsOrg(cmd) {
+			return
 		}
+		setupOrg()
+		exitOnError(orgErr)
+		if err := config.EnsureConfigExists(); err != nil {
+			exitOnError(fmt.Errorf("setting up configuration: %w", err))
+		}
+		applyRegionOverride()
 	},
 }
 
@@ -35,52 +44,48 @@ func Execute() {
 }
 
 func init() {
-	cobra.OnInitialize(func() {
-		initViper(cfgFile, regionOverride)
-	})
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.awsc/config.yaml)")
 	rootCmd.PersistentFlags().StringVar(&regionOverride, "region", "", "AWS region to use (overrides config)")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "enable verbose output")
+	rootCmd.PersistentFlags().StringVar(&orgFlag, "org", "", "org to use, as named in the awsc config (overrides "+config.OrgEnvVar+" and the default)")
+
+	// --config was replaced by orgs; kept hidden only to explain the change.
+	rootCmd.PersistentFlags().StringVar(&removedConfigFlag, "config", "", "")
+	_ = rootCmd.PersistentFlags().MarkHidden("config")
 }
 
-// initViper initializes viper configuration
-func initViper(cfgFile, regionOverride string) {
-	if cfgFile != "" {
-		// Check if custom config file exists
-		if _, err := os.Stat(cfgFile); os.IsNotExist(err) {
-			fmt.Printf("Error: config file '%s' does not exist\n", cfgFile)
-			os.Exit(1)
-		}
-		viper.SetConfigFile(cfgFile)
-	} else {
-		home, err := os.UserHomeDir()
-		cobra.CheckErr(err)
-
-		// Look for config in ~/.awsc/config.yaml
-		viper.AddConfigPath(home + "/.awsc")
-		viper.SetConfigType("yaml")
-		viper.SetConfigName("config")
-	}
-
-	viper.AutomaticEnv()
-
-	// Read config. If the user explicitly passed --config, a read failure is
-	// fatal; otherwise the config file is optional and errors are ignored.
-	if err := viper.ReadInConfig(); err != nil {
-		if cfgFile != "" {
-			fmt.Fprintf(os.Stderr, "Error reading config file '%s': %v\n", cfgFile, err)
-			os.Exit(1)
+// needsOrg reports whether a command works with AWS or the awsc config. Help,
+// version and shell completion must not migrate, sync or prompt.
+func needsOrg(cmd *cobra.Command) bool {
+	for c := cmd; c != nil; c = c.Parent() {
+		switch c.Name() {
+		case "help", "version", "completion", cobra.ShellCompRequestCmd, cobra.ShellCompNoDescRequestCmd:
+			return false
 		}
 	}
+	return true
+}
 
-	// Set region override if provided
-	if regionOverride != "" {
-		if !config.ValidateRegion(regionOverride) {
-			fmt.Fprintf(os.Stderr, "Error: invalid AWS region '%s'\n", regionOverride)
-			os.Exit(1)
-		}
-		viper.Set("default_region", regionOverride)
+// setupOrg migrates an old install if needed, keeps ~/.aws/config in sync and
+// selects the active org. Failures are recorded in orgErr.
+func setupOrg() {
+	if removedConfigFlag != "" {
+		exitOnError(fmt.Errorf("--config has been removed. All orgs now live in %s.\n"+
+			"Add an org with 'awsc config add <name>' and select it with --org <name>", config.GetConfigPath()))
 	}
+	orgErr = config.ActivateOrg(orgFlag)
+}
+
+// applyRegionOverride applies --region over the org's default region.
+func applyRegionOverride() {
+	if regionOverride == "" {
+		return
+	}
+	if !config.ValidateRegion(regionOverride) {
+		exitOnError(fmt.Errorf("invalid AWS region '%s'", regionOverride))
+	}
+	s := config.Active()
+	s.DefaultRegion = regionOverride
+	config.SetActive(s)
 }
 
 // validateLocalPort validates a user-supplied local port. A value of 0 is

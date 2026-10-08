@@ -17,7 +17,7 @@ var (
 
 var versionCmd = &cobra.Command{
 	Use:   "version",
-	Short: "Print version information",
+	Short: "Print awsc version information",
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Printf("awsc version %s\n", Version)
 		fmt.Printf("commit: %s\n", Commit)

@@ -1,124 +1,99 @@
 # AWSC Demo Flows
 
-These examples show representative terminal interactions. Account names, IDs,
-endpoints, and instance IDs are illustrative. Status and selection messages are
-printed to stderr; only `secrets show` writes the secret value to stdout.
+Representative terminal sessions; names and IDs are illustrative. Pickers show the
+current context on their first line and disappear once you choose. Status messages go
+to stderr; only `secrets show` writes to stdout (the secret value).
 
-Once port forwarding starts, the AWS `session-manager-plugin` takes over the
-terminal and prints its own connection details; press `Ctrl+C` to stop it.
+Once port forwarding starts, `session-manager-plugin` takes over the terminal; press
+`Ctrl+C` to stop it.
 
-## SSO Login Flow
+## Login
 
-```bash
+```text
 $ awsc login
-Starting SSO authentication...
-Opening browser to: https://my-org.awsapps.com/start/...
+Logging in to org "my-org". Confirm this code in the browser: LFRW-MMDP
+Press Enter to open https://my-org.awsapps.com/start/#/device?user_code=LFRW-MMDP (Ctrl+C to cancel)
+Waiting for approval in the browser (expires in 10 minutes)...
+....
+Authentication successful!
+
+Org: my-org | Region: ap-southeast-2
 
 Select AWS Account:
+
 ▶ production-account (123456789012)
   development-account (987654321098)
-  staging-account (555666777888)
 
-✓ Selected: production-account
-
-Select role for production-account:
-▶ AdminRole
-  ReadOnlyRole
-  DeveloperRole
-
-✓ Selected: AdminRole
-
-Successfully authenticated to production-account (123456789012) as AdminRole
-This terminal is now using profile awsc-production-account automatically.
-
-To pin this profile explicitly (e.g. in another terminal), export:
-  export AWSC_PROFILE=awsc-production-account
-To use it with the AWS CLI:
-  aws --profile awsc-production-account <command>
+↑/↓ navigate · Enter select · type to filter · Esc clear filter / quit
 ```
 
-## RDS Connect with Switch Account
-
-```bash
-$ awsc rds connect -s
-Select AWS Account:
-▶ production-account (123456789012)
-  development-account (987654321098)
-
+```text
 ✓ Selected: production-account
-
-Select role for production-account:
-▶ AdminRole
-  ReadOnlyRole
-
 ✓ Selected: AdminRole
+
+This terminal is now using production-account (123456789012) as AdminRole
+
+To use it with the AWS CLI in this terminal:
+  export AWS_PROFILE=awsc-production-account
+  export AWS_REGION=ap-southeast-2
+```
+
+The browser step only appears when there is no valid SSO login for the org.
+
+## RDS, switching account first
+
+```text
+$ awsc rds connect -s
+✓ Selected: development-account
+✓ Selected: DeveloperRole
+
+This terminal is now using development-account (987654321098) as DeveloperRole
+
+Org: my-org | Account: development-account | Role: DeveloperRole | Region: ap-southeast-2
 
 Select RDS Instance:
-▶ prod-mysql-db (mysql:3306)
-  analytics-cluster (writer) (aurora-mysql:3306) [Writer]
-  analytics-cluster (reader) (aurora-mysql:3306) [Reader]
 
-✓ Selected: prod-mysql-db
-Using bastion: web-server-1 (i-1234567890abcdef0)
+▶ dev-postgres (postgres:5432)
+  analytics-cluster (writer) (aurora-postgresql:5432) [Writer]
+  analytics-cluster (reader) (aurora-postgresql:5432) [Reader]
+```
+
+```text
+✓ Selected: dev-postgres
+Using bastion: bastion-1 (i-1234567890abcdef0)
 Starting port forwarding...
 ```
 
-## EC2 Connect Flow
+## Direct (no prompts)
 
-```bash
-$ awsc ec2 connect
-Select EC2 Instance:
-▶ web-server-1 (i-1234567890abcdef0) - Linux - running
-  api-server-2 (i-0987654321fedcba0) - Linux - running
-  worker-node-3 (i-abcdef1234567890) - Linux - stopped
-
-✓ Selected: web-server-1
-```
-
-## OpenSearch Domain Connection
-
-```bash
-$ awsc opensearch connect
-Select OpenSearch Domain:
-▶ search-logs-prod (OpenSearch_2.3)
-  analytics-dev (OpenSearch_1.3)
-  metrics-staging (OpenSearch_2.5)
-
-✓ Selected: search-logs-prod
-Using bastion: web-server-prod (i-0a1b2c3d4e5f67890)
-Starting port forwarding...
-```
-
-## Direct Parameter Usage
-
-```bash
+```text
 $ awsc rds connect --name "analytics-cluster (reader)" --local-port 5432
 Connecting to RDS instance: analytics-cluster (reader)
-✓ Selected: analytics-cluster (reader)
-Using bastion: web-server-1 (i-1234567890abcdef0)
+Using bastion: bastion-1 (i-1234567890abcdef0)
 Starting port forwarding...
-```
 
-```bash
 $ awsc ec2 connect --instance-id i-1234567890abcdef0
 Connecting to instance: web-server-1 (i-1234567890abcdef0)
-```
 
-```bash
-$ awsc opensearch connect --name search-logs-prod --local-port 9200
-Connecting to OpenSearch domain: search-logs-prod
-✓ Selected: search-logs-prod
-Using bastion: web-server-prod (i-0a1b2c3d4e5f67890)
+$ awsc opensearch connect --name search-logs --local-port 9200
+Connecting to OpenSearch domain: search-logs
+Using bastion: bastion-1 (i-1234567890abcdef0)
 Starting port forwarding...
 ```
 
-## Secrets Manager
+## Secrets
 
-`secrets show` prints status to stderr and the secret value to stdout, so it can
-be redirected cleanly:
-
-```bash
+```text
 $ awsc secrets show --name /prod/api-key > key.txt
 Showing secret: /prod/api-key
-# key.txt now contains only the secret value
+```
+
+`key.txt` contains only the secret value.
+
+## Nothing found
+
+```text
+$ awsc opensearch connect
+
+✗ Error: no OpenSearch domains found in development-account (ap-southeast-2) as DeveloperRole; use -s to switch account or --region to change region
 ```

@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -90,7 +91,7 @@ func (r *RDSManager) RunConnect(ctx context.Context, instanceName string, localP
 	}
 
 	if len(instances) == 0 {
-		return fmt.Errorf("no RDS instances found")
+		return notFoundError("RDS instances", r.region)
 	}
 
 	var selectedInstance RDSInstance
@@ -106,10 +107,10 @@ func (r *RDSManager) RunConnect(ctx context.Context, instanceName string, localP
 		}
 
 		if targetInstance != nil {
-			fmt.Printf("Connecting to RDS instance: %s\n", targetInstance.Identifier)
+			fmt.Fprintf(os.Stderr, "Connecting to RDS instance: %s\n", targetInstance.Identifier)
 			selectedInstance = *targetInstance
 		} else {
-			return fmt.Errorf("RDS instance '%s' not found", instanceName)
+			return namedNotFoundError("RDS instance", instanceName, r.region)
 		}
 	}
 
@@ -138,9 +139,7 @@ func (r *RDSManager) RunConnect(ctx context.Context, instanceName string, localP
 		}
 
 		selectedInstance = instances[selectedIndex]
-		fmt.Printf("✓ Selected: %s\n", selectedInstance.Identifier)
-	} else {
-		fmt.Printf("✓ Selected: %s\n", selectedInstance.Identifier)
+		fmt.Fprintf(os.Stderr, "✓ Selected: %s\n", selectedInstance.Identifier)
 	}
 
 	// Find bastion hosts
@@ -167,10 +166,10 @@ func (r *RDSManager) RunConnect(ctx context.Context, instanceName string, localP
 			return fmt.Errorf("no bastion selected")
 		}
 		bastion = bastions[selectedIndex]
-		fmt.Printf("✓ Selected bastion: %s (%s)\n", bastion.Name, bastion.InstanceId)
+		fmt.Fprintf(os.Stderr, "✓ Selected bastion: %s (%s)\n", bastion.Name, bastion.InstanceId)
 	} else {
 		bastion = bastions[0]
-		fmt.Printf("Using bastion: %s (%s)\n", bastion.Name, bastion.InstanceId)
+		fmt.Fprintf(os.Stderr, "Using bastion: %s (%s)\n", bastion.Name, bastion.InstanceId)
 	}
 
 	// Use default local port if not specified
@@ -207,27 +206,13 @@ func (r *RDSManager) getDBInstances(ctx context.Context) ([]RDSInstance, error) 
 	var marker *string
 
 	for {
-		result, err := r.rdsClient.DescribeDBInstances(ctx, &rds.DescribeDBInstancesInput{
-			Marker: marker,
+		result, err := withReauth(ctx, r.reloadClients, func() (*rds.DescribeDBInstancesOutput, error) {
+			return r.rdsClient.DescribeDBInstances(ctx, &rds.DescribeDBInstancesInput{
+				Marker: marker,
+			})
 		})
 		if err != nil {
-			if IsAuthError(err) {
-				if shouldReauth, reAuthErr := PromptForReauth(ctx); shouldReauth && reAuthErr == nil {
-					if reloadErr := r.reloadClients(ctx); reloadErr != nil {
-						return nil, reloadErr
-					}
-					result, err = r.rdsClient.DescribeDBInstances(ctx, &rds.DescribeDBInstancesInput{
-						Marker: marker,
-					})
-					if err != nil {
-						return nil, err
-					}
-				} else {
-					return nil, err
-				}
-			} else {
-				return nil, err
-			}
+			return nil, err
 		}
 
 		allDBInstances = append(allDBInstances, result.DBInstances...)
@@ -265,27 +250,13 @@ func (r *RDSManager) getClusterEndpoints(ctx context.Context) ([]RDSInstance, er
 	var marker *string
 
 	for {
-		result, err := r.rdsClient.DescribeDBClusters(ctx, &rds.DescribeDBClustersInput{
-			Marker: marker,
+		result, err := withReauth(ctx, r.reloadClients, func() (*rds.DescribeDBClustersOutput, error) {
+			return r.rdsClient.DescribeDBClusters(ctx, &rds.DescribeDBClustersInput{
+				Marker: marker,
+			})
 		})
 		if err != nil {
-			if IsAuthError(err) {
-				if shouldReauth, reAuthErr := PromptForReauth(ctx); shouldReauth && reAuthErr == nil {
-					if reloadErr := r.reloadClients(ctx); reloadErr != nil {
-						return nil, reloadErr
-					}
-					result, err = r.rdsClient.DescribeDBClusters(ctx, &rds.DescribeDBClustersInput{
-						Marker: marker,
-					})
-					if err != nil {
-						return nil, err
-					}
-				} else {
-					return nil, err
-				}
-			} else {
-				return nil, err
-			}
+			return nil, err
 		}
 
 		allClusters = append(allClusters, result.DBClusters...)
@@ -349,27 +320,13 @@ func (r *RDSManager) FindBastionHosts(ctx context.Context, rdsInstance RDSInstan
 	var nextToken *string
 
 	for {
-		result, err := r.ec2Client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
-			NextToken: nextToken,
+		result, err := withReauth(ctx, r.reloadClients, func() (*ec2.DescribeInstancesOutput, error) {
+			return r.ec2Client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+				NextToken: nextToken,
+			})
 		})
 		if err != nil {
-			if IsAuthError(err) {
-				if shouldReauth, reAuthErr := PromptForReauth(ctx); shouldReauth && reAuthErr == nil {
-					if reloadErr := r.reloadClients(ctx); reloadErr != nil {
-						return nil, reloadErr
-					}
-					result, err = r.ec2Client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
-						NextToken: nextToken,
-					})
-					if err != nil {
-						return nil, err
-					}
-				} else {
-					return nil, err
-				}
-			} else {
-				return nil, err
-			}
+			return nil, err
 		}
 
 		allReservations = append(allReservations, result.Reservations...)
@@ -434,29 +391,29 @@ func (r *RDSManager) FindBastionHosts(ctx context.Context, rdsInstance RDSInstan
 
 	// No bastion found - show helpful error
 	if stoppedInstances > 0 {
-		fmt.Printf("\nFound %d stopped EC2 instance(s):\n", stoppedInstances)
+		fmt.Fprintf(os.Stderr, "\nFound %d stopped EC2 instance(s):\n", stoppedInstances)
 		for _, name := range stoppedInstanceNames {
-			fmt.Printf("- %s (stopped)\n", name)
+			fmt.Fprintf(os.Stderr, "- %s (stopped)\n", name)
 		}
-		fmt.Printf("\n")
+		fmt.Fprintf(os.Stderr, "\n")
 	}
 
 	if runningInstances == 0 {
-		fmt.Printf("No running EC2 instances found in region %s.\n", r.region)
-		fmt.Printf("To use RDS port forwarding, you need a running EC2 instance with:\n")
-		fmt.Printf("- SSM agent installed and configured\n")
-		fmt.Printf("- Network access to the RDS instance\n")
+		fmt.Fprintf(os.Stderr, "No running EC2 instances found in %s.\n", location(r.region))
+		fmt.Fprintf(os.Stderr, "To use RDS port forwarding, you need a running EC2 instance with:\n")
+		fmt.Fprintf(os.Stderr, "- SSM agent installed and configured\n")
+		fmt.Fprintf(os.Stderr, "- Network access to the RDS instance\n")
 		if stoppedInstances > 0 {
-			fmt.Printf("\nYou can start one of the stopped instances above and try again.\n")
-			return nil, fmt.Errorf("no running bastion hosts found - %d stopped instances available", stoppedInstances)
+			fmt.Fprintf(os.Stderr, "\nYou can start one of the stopped instances above and try again.\n")
+			return nil, fmt.Errorf("no running bastion hosts found in %s - %d stopped instances available", location(r.region), stoppedInstances)
 		}
-		fmt.Printf("\nAlternatively, you can connect directly if your RDS is publicly accessible.\n")
-		return nil, fmt.Errorf("no running EC2 instances found in region %s", r.region)
+		fmt.Fprintf(os.Stderr, "\nAlternatively, you can connect directly if your RDS is publicly accessible.\n")
+		return nil, notFoundError("running EC2 instances", r.region)
 	}
 
-	fmt.Printf("Found %d running EC2 instances but none can connect to RDS %s.\n", runningInstances, rdsInstance.Identifier)
-	fmt.Printf("This usually means the security groups don't allow the connection.\n")
-	return nil, fmt.Errorf("no suitable bastion hosts found - security groups may not allow connection")
+	fmt.Fprintf(os.Stderr, "Found %d running EC2 instances but none can connect to RDS %s.\n", runningInstances, rdsInstance.Identifier)
+	fmt.Fprintf(os.Stderr, "This usually means the security groups don't allow the connection.\n")
+	return nil, fmt.Errorf("no suitable bastion hosts found in %s - security groups may not allow connection", location(r.region))
 }
 
 func (r *RDSManager) StartPortForwarding(ctx context.Context, bastionId, rdsEndpoint string, rdsPort, localPort int32) error {
@@ -468,7 +425,7 @@ func (r *RDSManager) StartPortForwarding(ctx context.Context, bastionId, rdsEndp
 
 	pf := NewExternalPluginForwarder(cfg)
 
-	fmt.Printf("Starting port forwarding...\n")
+	fmt.Fprintf(os.Stderr, "Starting port forwarding...\n")
 
 	// Start port forwarding to remote host through bastion
 	return pf.StartPortForwardingToRemoteHost(ctx, bastionId, rdsEndpoint, int(rdsPort), int(localPort))
@@ -477,31 +434,17 @@ func (r *RDSManager) StartPortForwarding(ctx context.Context, bastionId, rdsEndp
 func (r *RDSManager) getRDSSecurityGroups(ctx context.Context, rdsInstance RDSInstance) ([]string, error) {
 	if rdsInstance.EndpointType == "cluster-writer" || rdsInstance.EndpointType == "cluster-reader" {
 		// Get security groups from cluster
-		result, err := r.rdsClient.DescribeDBClusters(ctx, &rds.DescribeDBClustersInput{
-			DBClusterIdentifier: aws.String(rdsInstance.ClusterName),
+		result, err := withReauth(ctx, r.reloadClients, func() (*rds.DescribeDBClustersOutput, error) {
+			return r.rdsClient.DescribeDBClusters(ctx, &rds.DescribeDBClustersInput{
+				DBClusterIdentifier: aws.String(rdsInstance.ClusterName),
+			})
 		})
 		if err != nil {
-			if IsAuthError(err) {
-				if shouldReauth, reAuthErr := PromptForReauth(ctx); shouldReauth && reAuthErr == nil {
-					if reloadErr := r.reloadClients(ctx); reloadErr != nil {
-						return nil, reloadErr
-					}
-					result, err = r.rdsClient.DescribeDBClusters(ctx, &rds.DescribeDBClustersInput{
-						DBClusterIdentifier: aws.String(rdsInstance.ClusterName),
-					})
-					if err != nil {
-						return nil, err
-					}
-				} else {
-					return nil, err
-				}
-			} else {
-				return nil, err
-			}
+			return nil, err
 		}
 
 		if len(result.DBClusters) == 0 {
-			return nil, fmt.Errorf("RDS cluster not found")
+			return nil, fmt.Errorf("RDS cluster not found in %s", location(r.region))
 		}
 
 		var sgIds []string
@@ -513,31 +456,17 @@ func (r *RDSManager) getRDSSecurityGroups(ctx context.Context, rdsInstance RDSIn
 		return sgIds, nil
 	} else {
 		// Get security groups from instance
-		result, err := r.rdsClient.DescribeDBInstances(ctx, &rds.DescribeDBInstancesInput{
-			DBInstanceIdentifier: aws.String(rdsInstance.Identifier),
+		result, err := withReauth(ctx, r.reloadClients, func() (*rds.DescribeDBInstancesOutput, error) {
+			return r.rdsClient.DescribeDBInstances(ctx, &rds.DescribeDBInstancesInput{
+				DBInstanceIdentifier: aws.String(rdsInstance.Identifier),
+			})
 		})
 		if err != nil {
-			if IsAuthError(err) {
-				if shouldReauth, reAuthErr := PromptForReauth(ctx); shouldReauth && reAuthErr == nil {
-					if reloadErr := r.reloadClients(ctx); reloadErr != nil {
-						return nil, reloadErr
-					}
-					result, err = r.rdsClient.DescribeDBInstances(ctx, &rds.DescribeDBInstancesInput{
-						DBInstanceIdentifier: aws.String(rdsInstance.Identifier),
-					})
-					if err != nil {
-						return nil, err
-					}
-				} else {
-					return nil, err
-				}
-			} else {
-				return nil, err
-			}
+			return nil, err
 		}
 
 		if len(result.DBInstances) == 0 {
-			return nil, fmt.Errorf("RDS instance not found")
+			return nil, fmt.Errorf("RDS instance not found in %s", location(r.region))
 		}
 
 		var sgIds []string
@@ -553,27 +482,13 @@ func (r *RDSManager) getRDSSecurityGroups(ctx context.Context, rdsInstance RDSIn
 func (r *RDSManager) fetchSecurityGroupRules(ctx context.Context, sgIds []string) (map[string][]types.IpPermission, error) {
 	cache := make(map[string][]types.IpPermission, len(sgIds))
 	for _, sgId := range sgIds {
-		result, err := r.ec2Client.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
-			GroupIds: []string{sgId},
+		result, err := withReauth(ctx, r.reloadClients, func() (*ec2.DescribeSecurityGroupsOutput, error) {
+			return r.ec2Client.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
+				GroupIds: []string{sgId},
+			})
 		})
 		if err != nil {
-			if IsAuthError(err) {
-				if shouldReauth, reAuthErr := PromptForReauth(ctx); shouldReauth && reAuthErr == nil {
-					if reloadErr := r.reloadClients(ctx); reloadErr != nil {
-						return nil, reloadErr
-					}
-					result, err = r.ec2Client.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
-						GroupIds: []string{sgId},
-					})
-					if err != nil {
-						return nil, err
-					}
-				} else {
-					return nil, err
-				}
-			} else {
-				return nil, err
-			}
+			return nil, err
 		}
 		if len(result.SecurityGroups) > 0 {
 			cache[sgId] = result.SecurityGroups[0].IpPermissions

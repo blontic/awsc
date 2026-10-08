@@ -5,48 +5,26 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
-	"github.com/spf13/viper"
+	sdkconfig "github.com/aws/aws-sdk-go-v2/config"
 )
 
-func TestLoadAWSConfig(t *testing.T) {
-	// Set up test config
-	viper.Set("default_region", "us-west-2")
-	viper.Set("sso.region", "us-east-1")
+func TestLoadAWSConfig_UsesSSORegion(t *testing.T) {
+	defer func() { active = Settings{} }()
+	// SSO/OIDC calls must go to the Identity Center region, not the default
+	// region used for resource operations.
+	active.DefaultRegion = "us-west-2"
+	active.SSORegion = "us-east-1"
 
-	ctx := context.Background()
-	cfg, err := LoadAWSConfig(ctx)
+	cfg, err := LoadAWSConfig(context.Background())
 	if err != nil {
 		t.Fatalf("LoadAWSConfig failed: %v", err)
 	}
-
-	// Should use default_region over sso.region
-	if cfg.Region != "us-west-2" {
-		t.Errorf("Expected region us-west-2, got %s", cfg.Region)
+	if cfg.Region != "us-east-1" {
+		t.Errorf("Expected SSO region us-east-1, got %s", cfg.Region)
 	}
-
-	// Clean up
-	viper.Reset()
-}
-
-func TestLoadAWSConfigFallback(t *testing.T) {
-	// Set up test config with only sso.region
-	viper.Set("sso.region", "eu-west-1")
-
-	ctx := context.Background()
-	cfg, err := LoadAWSConfig(ctx)
-	if err != nil {
-		t.Fatalf("LoadAWSConfig failed: %v", err)
-	}
-
-	// Should fall back to sso.region
-	if cfg.Region != "eu-west-1" {
-		t.Errorf("Expected region eu-west-1, got %s", cfg.Region)
-	}
-
-	// Clean up
-	viper.Reset()
 }
 
 func TestLoadAWSConfigWithProfile_NoActiveSession(t *testing.T) {
@@ -68,8 +46,8 @@ func TestLoadAWSConfigWithProfile_NoActiveSession(t *testing.T) {
 	}()
 
 	// Set up test config
-	viper.Set("default_region", "ap-southeast-2")
-	defer viper.Reset()
+	active.DefaultRegion = "ap-southeast-2"
+	defer func() { active = Settings{} }()
 
 	ctx := context.Background()
 	_, err := LoadAWSConfigWithProfile(ctx)
@@ -123,8 +101,8 @@ func TestLoadAWSConfigWithProfile_EnvVarOverride(t *testing.T) {
 		}
 	}()
 
-	viper.Set("default_region", "ap-southeast-2")
-	defer viper.Reset()
+	active.DefaultRegion = "ap-southeast-2"
+	defer func() { active = Settings{} }()
 
 	ctx := context.Background()
 	_, err := LoadAWSConfigWithProfile(ctx)
@@ -175,8 +153,8 @@ func TestLoadAWSConfigWithProfile_PPIDFallback(t *testing.T) {
 		t.Fatalf("Failed to write session file: %v", err)
 	}
 
-	viper.Set("default_region", "ap-southeast-2")
-	defer viper.Reset()
+	active.DefaultRegion = "ap-southeast-2"
+	defer func() { active = Settings{} }()
 
 	ctx := context.Background()
 	_, err := LoadAWSConfigWithProfile(ctx)
@@ -190,5 +168,65 @@ func TestLoadAWSConfigWithProfile_PPIDFallback(t *testing.T) {
 	if !contains(err.Error(), "awsc-test-account") && !contains(err.Error(), "shared config profile") {
 		t.Logf("Error message: %v", err)
 		t.Log("Note: PPID session fallback is working (expected behavior)")
+	}
+}
+
+// setupSession configures the "alpha" org, a session for this terminal and,
+// optionally, ~/.aws/config content.
+func setupSession(t *testing.T, sessionOrg, awsConfig string) string {
+	t.Helper()
+	home := setupHome(t, twoOrgsYAML)
+	t.Setenv("AWSC_PROFILE", "")
+	if awsConfig != "" {
+		writeFile(t, filepath.Join(home, ".aws", "config"), awsConfig)
+	}
+	if err := SaveSession(os.Getppid(), "awsc-prod", "111111111111", "prod", "Admin", sessionOrg); err != nil {
+		t.Fatal(err)
+	}
+	if err := ActivateOrg("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	return home
+}
+
+const prodProfile = `[profile awsc-prod]
+sso_session = awsc-alpha
+sso_account_id = 111111111111
+sso_role_name = %s
+`
+
+func TestLoadAWSConfigWithProfile_SessionForOtherOrg(t *testing.T) {
+	setupSession(t, "beta", fmt.Sprintf(prodProfile, "Admin"))
+	if _, err := LoadAWSConfigWithProfile(context.Background()); err == nil || err.Error() != "no active session" {
+		t.Errorf("expected 'no active session' for another org's session, got %v", err)
+	}
+}
+
+func TestLoadAWSConfigWithProfile_RoleChangedByOtherTerminal(t *testing.T) {
+	setupSession(t, "alpha", fmt.Sprintf(prodProfile, "ReadOnly"))
+	if _, err := LoadAWSConfigWithProfile(context.Background()); err == nil || err.Error() != "no active session" {
+		t.Errorf("expected 'no active session' when the profile's role changed, got %v", err)
+	}
+}
+
+func TestLoadAWSConfigWithProfile_RestoresDeletedProfile(t *testing.T) {
+	home := setupSession(t, "alpha", "")
+	if err := os.Remove(filepath.Join(home, ".aws", "config")); err != nil {
+		t.Fatal(err)
+	}
+	// The SDK resolves its default shared config path once at startup, so point
+	// it at this test's HOME.
+	original := sdkconfig.DefaultSharedConfigFiles
+	sdkconfig.DefaultSharedConfigFiles = []string{filepath.Join(home, ".aws", "config")}
+	defer func() { sdkconfig.DefaultSharedConfigFiles = original }()
+
+	if _, err := LoadAWSConfigWithProfile(context.Background()); err != nil {
+		t.Fatalf("expected profile to be restored, got %v", err)
+	}
+	got := readFile(t, filepath.Join(home, ".aws", "config"))
+	for _, want := range []string{"[sso-session awsc-alpha]", "[profile awsc-prod]", "sso_role_name = Admin"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q after restore:\n%s", want, got)
+		}
 	}
 }

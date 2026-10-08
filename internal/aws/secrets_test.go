@@ -2,6 +2,7 @@ package aws
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -323,8 +324,8 @@ func TestSecretsManager_RunShowSecrets_EmptyList(t *testing.T) {
 		Return(&secretsmanager.ListSecretsOutput{SecretList: []types.SecretListEntry{}}, nil)
 
 	err := manager.RunShowSecrets(context.Background(), "")
-	if err != nil {
-		t.Errorf("Unexpected error: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "no secrets found in") || !strings.Contains(err.Error(), "us-east-1") {
+		t.Errorf("expected a not-found error naming where it looked, got %v", err)
 	}
 }
 

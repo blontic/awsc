@@ -2,8 +2,6 @@ package cmd
 
 import (
 	"context"
-	"fmt"
-	"os"
 
 	"github.com/blontic/awsc/internal/aws"
 	"github.com/spf13/cobra"
@@ -48,123 +46,33 @@ func init() {
 	ec2RdpCmd.Flags().BoolVarP(&ec2SwitchAccount, "switch-account", "s", false, "Switch AWS account before connecting")
 }
 
-func createEC2Manager() (*aws.EC2Manager, error) {
-	ctx := context.Background()
-	return aws.NewEC2Manager(ctx)
+// newEC2Manager creates the EC2 manager, logging in or switching account first
+// if needed.
+func newEC2Manager(ctx context.Context) (*aws.EC2Manager, error) {
+	return newManager(ctx, func(ctx context.Context) (*aws.EC2Manager, error) {
+		return aws.NewEC2Manager(ctx)
+	}, ec2SwitchAccount)
 }
 
 func runEC2Connect(cmd *cobra.Command, args []string) {
 	ctx := context.Background()
 
-	// Track if we just authenticated (to avoid double-login with -s flag)
-	justAuthenticated := false
+	ec2Manager, err := newEC2Manager(ctx)
+	exitOnError(err)
 
-	ec2Manager, err := createEC2Manager()
-	if err != nil {
-		// Check if this is a "no active session" error
-		if aws.IsAuthError(err) {
-			shouldReauth, reAuthErr := aws.PromptForReauth(ctx)
-			if reAuthErr != nil {
-				fmt.Printf("Error during re-authentication: %v\n", reAuthErr)
-				os.Exit(1)
-			}
-			if !shouldReauth {
-				fmt.Printf("Authentication cancelled\n")
-				os.Exit(1)
-			}
-			justAuthenticated = true
-			// Retry creating manager after successful login
-			ec2Manager, err = createEC2Manager()
-			if err != nil {
-				fmt.Printf("Error creating EC2 manager after re-authentication: %v\n", err)
-				os.Exit(1)
-			}
-		} else {
-			fmt.Printf("Error creating EC2 manager: %v\n", err)
-			os.Exit(1)
-		}
-	}
-
-	// Handle account switching if requested (skip if we just authenticated)
-	if ec2SwitchAccount && !justAuthenticated {
-		if err := handleAccountSwitch(ctx); err != nil {
-			fmt.Printf("%v\n", err)
-			os.Exit(1)
-		}
-		// Recreate manager with new credentials
-		ec2Manager, err = createEC2Manager()
-		if err != nil {
-			fmt.Printf("Error creating EC2 manager after account switch: %v\n", err)
-			os.Exit(1)
-		}
-	}
-
-	// Get instance-id flag value
 	instanceIdFlag, _ := cmd.Flags().GetString("instance-id")
-
-	if err := ec2Manager.RunConnect(ctx, instanceIdFlag); err != nil {
-		fmt.Printf("\n✗ Error: %v\n", err)
-		os.Exit(1)
-	}
+	exitOnError(ec2Manager.RunConnect(ctx, instanceIdFlag))
 }
 
 func runEC2RDP(cmd *cobra.Command, args []string) {
 	ctx := context.Background()
 
-	// Track if we just authenticated (to avoid double-login with -s flag)
-	justAuthenticated := false
-
-	ec2Manager, err := createEC2Manager()
-	if err != nil {
-		// Check if this is a "no active session" error
-		if aws.IsAuthError(err) {
-			shouldReauth, reAuthErr := aws.PromptForReauth(ctx)
-			if reAuthErr != nil {
-				fmt.Printf("Error during re-authentication: %v\n", reAuthErr)
-				os.Exit(1)
-			}
-			if !shouldReauth {
-				fmt.Printf("Authentication cancelled\n")
-				os.Exit(1)
-			}
-			justAuthenticated = true
-			// Retry creating manager after successful login
-			ec2Manager, err = createEC2Manager()
-			if err != nil {
-				fmt.Printf("Error creating EC2 manager after re-authentication: %v\n", err)
-				os.Exit(1)
-			}
-		} else {
-			fmt.Printf("Error creating EC2 manager: %v\n", err)
-			os.Exit(1)
-		}
-	}
-
-	// Handle account switching if requested (skip if we just authenticated)
-	if ec2SwitchAccount && !justAuthenticated {
-		if err := handleAccountSwitch(ctx); err != nil {
-			fmt.Printf("%v\n", err)
-			os.Exit(1)
-		}
-		// Recreate manager with new credentials
-		ec2Manager, err = createEC2Manager()
-		if err != nil {
-			fmt.Printf("Error creating EC2 manager after account switch: %v\n", err)
-			os.Exit(1)
-		}
-	}
-
-	// Get flag values
 	instanceIdFlag, _ := cmd.Flags().GetString("instance-id")
 	localPortFlag, _ := cmd.Flags().GetInt32("local-port")
+	exitOnError(validateLocalPort(int(localPortFlag)))
 
-	if err := validateLocalPort(int(localPortFlag)); err != nil {
-		fmt.Fprintf(os.Stderr, "%v\n", err)
-		os.Exit(1)
-	}
+	ec2Manager, err := newEC2Manager(ctx)
+	exitOnError(err)
 
-	if err := ec2Manager.RunRDP(ctx, instanceIdFlag, localPortFlag); err != nil {
-		fmt.Printf("\n✗ Error: %v\n", err)
-		os.Exit(1)
-	}
+	exitOnError(ec2Manager.RunRDP(ctx, instanceIdFlag, localPortFlag))
 }

@@ -12,7 +12,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sso/types"
 	awscconfig "github.com/blontic/awsc/internal/config"
 	"github.com/blontic/awsc/internal/ui"
-	"github.com/spf13/viper"
 )
 
 type SSOManager struct {
@@ -85,27 +84,12 @@ func (s *SSOManager) ListRoles(ctx context.Context, accessToken, accountId strin
 	return allRoles, nil
 }
 
-func (s *SSOManager) GetRoleCredentials(ctx context.Context, accessToken, accountId, roleName string) (*types.RoleCredentials, error) {
-	input := &sso.GetRoleCredentialsInput{
-		AccessToken: &accessToken,
-		AccountId:   &accountId,
-		RoleName:    &roleName,
-	}
-
-	result, err := s.client.GetRoleCredentials(ctx, input)
-	if err != nil {
-		return nil, err
-	}
-
-	return result.RoleCredentials, nil
-}
-
 // RunLogin handles the complete SSO login workflow
 func (s *SSOManager) RunLogin(ctx context.Context, force bool, accountName, roleName string) error {
 
 	// Check if config exists
-	if viper.GetString("sso.start_url") == "" {
-		return fmt.Errorf("no SSO configuration found. Please run 'awsc config init' first")
+	if awscconfig.Active().StartURL == "" {
+		return fmt.Errorf("no SSO configuration found. Please run 'awsc config add' first")
 	}
 
 	// Create credentials manager for authentication
@@ -116,34 +100,28 @@ func (s *SSOManager) RunLogin(ctx context.Context, force bool, accountName, role
 
 	// Try to get cached SSO token and use it if valid (unless force is true)
 	if !force {
-		accessToken, err := credentialsManager.GetCachedToken()
+		accessToken, err := credentialsManager.GetCachedToken(ctx)
 		if err == nil {
 			// Try listing accounts to see if SSO token works
 			accounts, listErr := s.ListAccounts(ctx, *accessToken)
 			if listErr == nil && len(accounts) > 0 {
-				// SSO token works, save account cache and proceed with account/role selection
-				if err := awscconfig.SaveAccountCache(accounts); err != nil {
-					// Don't fail login if cache save fails
-					fmt.Printf("Warning: failed to save account cache: %v\n", err)
-				}
 				return s.handleAccountRoleSelection(ctx, *accessToken, accounts, accountName, roleName)
 			}
 		}
 	}
 
 	// If we get here, need to re-authenticate
-	fmt.Printf("Starting SSO authentication...\n")
 
 	// Try authentication
-	startURL := viper.GetString("sso.start_url")
-	ssoRegion := viper.GetString("sso.region")
+	startURL := awscconfig.Active().StartURL
+	ssoRegion := awscconfig.Active().SSORegion
 
 	if err := credentialsManager.Authenticate(ctx, startURL, ssoRegion); err != nil {
 		return fmt.Errorf("SSO authentication failed: %v", err)
 	}
 
 	// Get fresh access token
-	accessToken, err := credentialsManager.GetCachedToken()
+	accessToken, err := credentialsManager.GetCachedToken(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get access token: %v", err)
 	}
@@ -155,13 +133,7 @@ func (s *SSOManager) RunLogin(ctx context.Context, force bool, accountName, role
 	}
 
 	if len(accounts) == 0 {
-		return fmt.Errorf("no accounts found")
-	}
-
-	// Save account cache
-	if err := awscconfig.SaveAccountCache(accounts); err != nil {
-		// Don't fail login if cache save fails, just log it
-		fmt.Printf("Warning: failed to save account cache: %v\n", err)
+		return fmt.Errorf("no AWS accounts are available to the signed-in user; check you approved the login in the browser as the right user, then run 'awsc login --force'")
 	}
 
 	return s.handleAccountRoleSelection(ctx, *accessToken, accounts, accountName, roleName)
@@ -186,9 +158,9 @@ func (s *SSOManager) handleAccountRoleSelection(ctx context.Context, accessToken
 			}
 		}
 		if selectedAccountIndex == -1 {
-			return fmt.Errorf("account '%s' not found", accountName)
+			return fmt.Errorf("account '%s' not found in org %q", accountName, awscconfig.Active().Org)
 		} else {
-			fmt.Printf("Found account: %s\n", aws.ToString(selectedAccount.AccountName))
+			fmt.Fprintf(os.Stderr, "Found account: %s\n", aws.ToString(selectedAccount.AccountName))
 		}
 	}
 
@@ -201,7 +173,7 @@ func (s *SSOManager) handleAccountRoleSelection(ctx context.Context, accessToken
 		}
 
 		// Interactive account selection
-		selectedAccountIndex, err := ui.RunSelector("Select AWS Account:", accountOptions)
+		selectedAccountIndex, err := ui.RunSelectorWithContext("Select AWS Account:", accountOptions, loginContext(""))
 		if err != nil {
 			return fmt.Errorf("error selecting account: %v", err)
 		}
@@ -210,7 +182,7 @@ func (s *SSOManager) handleAccountRoleSelection(ctx context.Context, accessToken
 		}
 		selectedAccount = accounts[selectedAccountIndex]
 	}
-	fmt.Printf("✓ Selected: %s\n", aws.ToString(selectedAccount.AccountName))
+	fmt.Fprintf(os.Stderr, "✓ Selected: %s\n", aws.ToString(selectedAccount.AccountName))
 
 	// List roles
 	roles, err := s.ListRoles(ctx, accessToken, aws.ToString(selectedAccount.AccountId))
@@ -219,7 +191,7 @@ func (s *SSOManager) handleAccountRoleSelection(ctx context.Context, accessToken
 	}
 
 	if len(roles) == 0 {
-		return fmt.Errorf("no roles found for this account")
+		return fmt.Errorf("no roles available to you in account %s (org %q)", aws.ToString(selectedAccount.AccountName), awscconfig.Active().Org)
 	}
 
 	// Sort roles alphabetically
@@ -240,9 +212,9 @@ func (s *SSOManager) handleAccountRoleSelection(ctx context.Context, accessToken
 			}
 		}
 		if selectedRoleIndex == -1 {
-			return fmt.Errorf("role '%s' not found in account %s", roleName, aws.ToString(selectedAccount.AccountName))
+			return fmt.Errorf("role '%s' not found in account %s (org %q)", roleName, aws.ToString(selectedAccount.AccountName), awscconfig.Active().Org)
 		} else {
-			fmt.Printf("Found role: %s\n", aws.ToString(selectedRole.RoleName))
+			fmt.Fprintf(os.Stderr, "Found role: %s\n", aws.ToString(selectedRole.RoleName))
 		}
 	}
 
@@ -255,7 +227,7 @@ func (s *SSOManager) handleAccountRoleSelection(ctx context.Context, accessToken
 		}
 
 		// Interactive role selection
-		selectedRoleIndex, err := ui.RunSelector(fmt.Sprintf("Select role for %s:", aws.ToString(selectedAccount.AccountName)), roleOptions)
+		selectedRoleIndex, err := ui.RunSelectorWithContext(fmt.Sprintf("Select role for %s:", aws.ToString(selectedAccount.AccountName)), roleOptions, loginContext(aws.ToString(selectedAccount.AccountName)))
 		if err != nil {
 			return fmt.Errorf("error selecting role: %v", err)
 		}
@@ -264,32 +236,42 @@ func (s *SSOManager) handleAccountRoleSelection(ctx context.Context, accessToken
 		}
 		selectedRole = roles[selectedRoleIndex]
 	}
-	fmt.Printf("✓ Selected: %s\n", aws.ToString(selectedRole.RoleName))
+	fmt.Fprintf(os.Stderr, "✓ Selected: %s\n", aws.ToString(selectedRole.RoleName))
 
-	// Get credentials (AWS SSO automatically uses max duration for the role)
-	creds, err := s.GetRoleCredentials(ctx, accessToken, aws.ToString(selectedAccount.AccountId), aws.ToString(selectedRole.RoleName))
+	// Write an SSO profile to ~/.aws/config (no credentials are stored; the SDK
+	// fetches short-lived role credentials on demand from the cached SSO token)
+	org := awscconfig.Active().Org
+	cfg, err := awscconfig.ReadFileConfig()
 	if err != nil {
-		return fmt.Errorf("error getting role credentials: %v", err)
+		return fmt.Errorf("error reading awsc config: %v", err)
 	}
-
-	// Write profile to ~/.aws/config
-	profileName, err := awscconfig.WriteProfile(aws.ToString(selectedAccount.AccountName), aws.ToString(selectedAccount.AccountId), aws.ToString(selectedRole.RoleName), creds)
+	profileName, err := awscconfig.WriteProfile(cfg.Orgs, awscconfig.Profile{
+		Org:         org,
+		AccountName: aws.ToString(selectedAccount.AccountName),
+		AccountID:   aws.ToString(selectedAccount.AccountId),
+		RoleName:    aws.ToString(selectedRole.RoleName),
+	})
 	if err != nil {
 		return fmt.Errorf("error writing profile: %v", err)
 	}
 
 	// Save session for current shell
 	ppid := os.Getppid()
-	if err := awscconfig.SaveSession(ppid, profileName, aws.ToString(selectedAccount.AccountId), aws.ToString(selectedAccount.AccountName), aws.ToString(selectedRole.RoleName)); err != nil {
+	if err := awscconfig.SaveSession(ppid, profileName, aws.ToString(selectedAccount.AccountId), aws.ToString(selectedAccount.AccountName), aws.ToString(selectedRole.RoleName), org); err != nil {
 		return fmt.Errorf("error saving session: %v", err)
 	}
 
 	// Cleanup stale sessions (best effort, ignore errors)
 	_ = awscconfig.CleanupStaleSessions()
 
-	fmt.Printf("\nSuccessfully authenticated to %s (%s) as %s\n", aws.ToString(selectedAccount.AccountName), aws.ToString(selectedAccount.AccountId), aws.ToString(selectedRole.RoleName))
-	fmt.Printf("\nTo use it with the AWS CLI in this terminal:\n")
-	fmt.Printf("  export AWS_PROFILE=%s\n", profileName)
-	fmt.Printf("  export AWS_REGION=%s\n", viper.GetString("default_region"))
+	fmt.Fprintf(os.Stderr, "\nThis terminal is now using %s (%s) as %s\n\n", aws.ToString(selectedAccount.AccountName), aws.ToString(selectedAccount.AccountId), aws.ToString(selectedRole.RoleName))
 	return nil
+}
+
+// loginContext is the selector header while choosing an account and role: the
+// org being logged in to and, once chosen, the account — not the terminal's
+// previous account.
+func loginContext(account string) *ui.AWSContext {
+	active := awscconfig.Active()
+	return &ui.AWSContext{Org: active.Org, Account: account, Region: active.DefaultRegion}
 }
