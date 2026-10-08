@@ -124,6 +124,7 @@ func TestNeedsOrg(t *testing.T) {
 	cases := map[*cobra.Command]bool{
 		versionCmd: false,
 		completion: false,
+		statusCmd:  false,
 		loginCmd:   true,
 		configCmd:  true,
 	}
