@@ -92,10 +92,12 @@ homebrew_casks:
     caveats: |
       RDS/EC2/OpenSearch port forwarding requires the AWS Session Manager Plugin:
         brew install --cask session-manager-plugin
-    # The binary is not signed/notarized, so strip the quarantine flag on install
-    # to avoid Gatekeeper blocking it.
+    # The binary is not signed with a Developer ID or notarized, so Gatekeeper
+    # kills it while it carries Homebrew's quarantine flag. Strip the flag in
+    # preflight: Homebrew runs it before linking the binary and running it to
+    # generate completions (postflight runs after both, which is too late).
     hooks:
-      post:
+      pre:
         install: |
           if OS.mac?
             system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/awsc"]
