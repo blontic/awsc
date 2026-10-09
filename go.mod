@@ -1,6 +1,6 @@
 module github.com/blontic/awsc
 
-go 1.26.8
+go 1.26.9
 
 require (
 	charm.land/bubbletea/v2 v2.0.10
